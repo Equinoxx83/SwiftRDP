@@ -1,5 +1,5 @@
 #!/bin/bash
-# FastRDP.sh – Vérifie les dépendances, vérifie la mise à jour et lance l'application FastRDP
+# SwiftRDP.sh – Vérifie les dépendances, vérifie la mise à jour et lance l'application SwiftRDP
 
 if ! command -v zenity >/dev/null 2>&1; then
     sudo apt update && sudo apt install -y zenity || exit 1
@@ -72,7 +72,7 @@ if ! command -v git >/dev/null 2>&1; then
 fi
 
 # --- Lancer l'application Python intégrée ---
-PYFILE=$(mktemp /tmp/FastRDP_app.XXXXXX.py)
+PYFILE=$(mktemp /tmp/SwiftRDP_app.XXXXXX.py)
 cat > "$PYFILE" << 'EOF'
 #!/usr/bin/env python3
 import tkinter as tk
@@ -119,7 +119,7 @@ def get_theme():
 # --- Traductions ---
 translations = {
     "fr": {
-         "title": "FastRDP",
+         "title": "SwiftRDP",
          "search": "Recherche:",
          "connect": "Se connecter",
          "add": "Ajouter",
@@ -142,7 +142,7 @@ translations = {
          "connection_added": "Connexion ajoutée.",
          "connection_modified": "Connexion modifiée.",
          "language_saved_restart": "La langue et/ou le thème ont été enregistrés. L'application va redémarrer automatiquement.",
-         "new_version_available": "Une nouvelle version est disponible. Voulez-vous mettre à jour FastRDP ?",
+         "new_version_available": "Une nouvelle version est disponible. Voulez-vous mettre à jour SwiftRDP ?",
          "no_update_available": "Aucune mise à jour disponible.",
          "update_failed": "La mise à jour a échoué",
          "update_complete": "Mise à jour terminée. L'application va redémarrer.",
@@ -179,7 +179,7 @@ translations = {
          "export_configuration_option": "Exporter la configuration",
          "import_configuration_option": "Importer la configuration",
          "delete_configuration_option": "Supprimer la configuration",
-         "update_option": "Mettre à jour FastRDP",
+         "update_option": "Mettre à jour SwiftRDP",
          "support_option": "Support",
          "choose_backup_directory": "Choisissez le dossier de sauvegarde",
          "choose_export_directory": "Choisissez le dossier d'exportation",
@@ -193,7 +193,7 @@ translations = {
          "light": "Clair"
     },
     "en": {
-         "title": "FastRDP",
+         "title": "SwiftRDP",
          "search": "Search:",
          "connect": "Connect",
          "add": "Add",
@@ -216,7 +216,7 @@ translations = {
          "connection_added": "Connection added.",
          "connection_modified": "Connection modified.",
          "language_saved_restart": "Language and/or theme saved. The application will restart automatically.",
-         "new_version_available": "A new version is available. Do you want to update FastRDP?",
+         "new_version_available": "A new version is available. Do you want to update SwiftRDP?",
          "no_update_available": "No update available.",
          "update_failed": "Update failed",
          "update_complete": "Update complete. The application will restart.",
@@ -253,7 +253,7 @@ translations = {
          "export_configuration_option": "Export Configuration",
          "import_configuration_option": "Import Configuration",
          "delete_configuration_option": "Delete Configuration",
-         "update_option": "Update FastRDP",
+         "update_option": "Update SwiftRDP",
          "support_option": "Support",
          "choose_backup_directory": "Choose backup directory",
          "choose_export_directory": "Choose export directory",
@@ -275,7 +275,7 @@ def t(key, **kwargs):
 # --- Fichiers de données et version ---
 FILE_CONNS = "connexions.txt"
 GROUPS_FILE = "groups.txt"
-VERSION_FILE = "/opt/FastRDP/version.txt"  # Ce fichier doit être géré dans votre dépôt
+VERSION_FILE = "/opt/SwiftRDP/version.txt"  # Ce fichier doit être géré dans votre dépôt
 
 REMOTE_WINDOW_KEYWORD = "FreeRDP"
 
@@ -350,7 +350,7 @@ def delete_group_from_storage(grp):
     save_connections(data)
 
 def backup_configuration(dest_path, export=False):
-    zip_name = "fastrdpexport.zip" if export else "fastrdpsave.zip"
+    zip_name = "SwiftRDPexport.zip" if export else "SwiftRDPsave.zip"
     full_path = os.path.join(dest_path, zip_name)
     with zipfile.ZipFile(full_path, 'w') as zipf:
         for file in [FILE_CONNS, GROUPS_FILE]:
@@ -408,7 +408,7 @@ def get_version():
         return ""
 
 def read_patch_note():
-    changelog_path = "/opt/FastRDP/CHANGELOG"
+    changelog_path = "/opt/SwiftRDP/CHANGELOG"
     if os.path.exists(changelog_path):
         with open(changelog_path, "r", encoding="utf-8") as f:
             content = f.read().strip()
@@ -419,7 +419,7 @@ class RDPApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.theme = get_theme()
-        self.logo = tk.PhotoImage(file="/opt/FastRDP/icon.png")
+        self.logo = tk.PhotoImage(file="/opt/SwiftRDP/icon.png")
         self.iconphoto(False, self.logo)
         self.title(t("title"))
         self.geometry("1600x900")
@@ -436,7 +436,7 @@ class RDPApp(tk.Tk):
         content = read_patch_note()
         if not content or content == t("patch_note_empty"):
             return
-        hide_file = "/opt/FastRDP/CHANGELOGHIDE"  # chemin absolu
+        hide_file = "/opt/SwiftRDP/CHANGELOGHIDE"  # chemin absolu
         current_version = get_version()
         if os.path.exists(hide_file):
             with open(hide_file, "r", encoding="utf-8") as f:
@@ -466,7 +466,7 @@ class RDPApp(tk.Tk):
         def close_dialog():
             if show_checkbox and var_hide.get():
                 # Enregistrement du choix dans le fichier de masquage
-                with open("/opt/FastRDP/CHANGELOGHIDE", "w", encoding="utf-8") as f:
+                with open("/opt/SwiftRDP/CHANGELOGHIDE", "w", encoding="utf-8") as f:
                     f.write(get_version())
             dialog.destroy()
         tk.Button(dialog, text=t("return"), command=close_dialog, font=self.font_main,
@@ -901,7 +901,7 @@ class RDPApp(tk.Tk):
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
         tk.Button(btn_frame, text=t("update_option"), command=lambda: threading.Thread(target=check_for_update, args=(self, True), daemon=True).start(), font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
-        tk.Button(btn_frame, text=t("support_option"), command=lambda: webbrowser.open("https://github.com/Equinoxx83/FastRDP/issues"), font=self.font_main,
+        tk.Button(btn_frame, text=t("support_option"), command=lambda: webbrowser.open("https://github.com/Equinoxx83/SwiftRDP/issues"), font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
         # Bouton pour afficher le patch note
         tk.Button(btn_frame, text=t("view_patch_note"),
@@ -952,7 +952,7 @@ class RDPApp(tk.Tk):
                     f.write(CURRENT_THEME)
                 messagebox.showinfo(t("info"), t("language_saved_restart"), parent=top)
                 top.destroy()
-                subprocess.Popen(["/bin/bash", "/opt/FastRDP/FastRDP.sh"])
+                subprocess.Popen(["/bin/bash", "/opt/SwiftRDP/SwiftRDP.sh"])
                 self.destroy()
                 sys.exit(0)
             else:
@@ -999,11 +999,11 @@ class RDPApp(tk.Tk):
             messagebox.showinfo(t("info"), "Configuration supprimée.", parent=self)
         self.refresh_table()
 
-    def update_fastrdp(self):
+    def update_SwiftRDP(self):
         threading.Thread(target=check_for_update, args=(self, True), daemon=True).start()
 
     def support(self):
-        webbrowser.open("https://github.com/Equinoxx83/FastRDP/issues")
+        webbrowser.open("https://github.com/Equinoxx83/SwiftRDP/issues")
 
     def edit_connection_note(self, row):
         if window_exists(self, t("modify_note_title")):
@@ -1036,7 +1036,7 @@ class RDPApp(tk.Tk):
         self.refresh_table()
 
 def check_for_update(app, from_menu=False):
-    repo_url = "https://github.com/Equinoxx83/FastRDP.git"
+    repo_url = "https://github.com/Equinoxx83/SwiftRDP.git"
     temp_dir = tempfile.mkdtemp()
     try:
         subprocess.check_call(["git", "clone", "--depth", "1", repo_url, temp_dir])
@@ -1066,7 +1066,7 @@ def update_app(app, repo_url, remote_version):
     temp_dir = tempfile.mkdtemp()
     try:
         subprocess.check_call(["git", "clone", "--depth", "1", repo_url, temp_dir])
-        dest_dir = "/opt/FastRDP"
+        dest_dir = "/opt/SwiftRDP"
         for item in os.listdir(dest_dir):
             s = os.path.join(dest_dir, item)
             if os.path.isdir(s):
@@ -1082,17 +1082,17 @@ def update_app(app, repo_url, remote_version):
                 shutil.copy2(s, d)
         with open(os.path.join(dest_dir, "version.txt"), "w", encoding="utf-8") as vf:
             vf.write(remote_version)
-        os.chmod(os.path.join(dest_dir, "FastRDP.sh"), 0o755)
+        os.chmod(os.path.join(dest_dir, "SwiftRDP.sh"), 0o755)
         # Supprimer le fichier de masquage pour forcer l'affichage du patch note pour la nouvelle version
-        if os.path.exists("/opt/FastRDP/CHANGELOGHIDE"):
-            os.remove("/opt/FastRDP/CHANGELOGHIDE")
+        if os.path.exists("/opt/SwiftRDP/CHANGELOGHIDE"):
+            os.remove("/opt/SwiftRDP/CHANGELOGHIDE")
     except Exception as e:
         messagebox.showerror(t("error"), f"{t('update_failed')}\n{e}", parent=app)
         return
     finally:
         shutil.rmtree(temp_dir)
     messagebox.showinfo(t("update_option"), t("update_complete"), parent=app)
-    subprocess.Popen(["/bin/bash", "/opt/FastRDP/FastRDP.sh"])
+    subprocess.Popen(["/bin/bash", "/opt/SwiftRDP/SwiftRDP.sh"])
     app.destroy()
     sys.exit(0)
 
