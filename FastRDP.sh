@@ -447,6 +447,8 @@ class RDPApp(tk.Tk):
 
     def show_patch_note_dialog(self, content, show_checkbox=True):
         dialog = tk.Toplevel(self)
+        dialog.lift()
+        dialog.attributes("-topmost", True)
         dialog.iconphoto(False, self.logo)
         dialog.title(t("patch_note"))
         dialog.geometry("800x600")
