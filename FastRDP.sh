@@ -449,7 +449,7 @@ class RDPApp(tk.Tk):
         dialog = tk.Toplevel(self)
         dialog.iconphoto(False, self.logo)  # Utilise l'icône de l'application
         dialog.title(t("patch_note"))
-        dialog.geometry("600x400")
+        dialog.geometry("800x600")
         dialog.configure(bg=self.theme["bg"])
         text = tk.Text(dialog, wrap=tk.WORD, font=self.font_main,
                        bg=self.theme["entry_bg"], fg=self.theme["fg"])
