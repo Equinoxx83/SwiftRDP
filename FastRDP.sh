@@ -1074,6 +1074,9 @@ def update_app(app, repo_url, remote_version):
         with open(os.path.join(dest_dir, "version.txt"), "w", encoding="utf-8") as vf:
             vf.write(remote_version)
         os.chmod(os.path.join(dest_dir, "FastRDP.sh"), 0o755)
+        # Supprimer le fichier de masquage pour forcer l'affichage du patch note pour la nouvelle version
+        if os.path.exists("CHANGELOGHIDE"):
+            os.remove("CHANGELOGHIDE")
     except Exception as e:
         messagebox.showerror(t("error"), f"{t('update_failed')}\n{e}", parent=app)
         return
