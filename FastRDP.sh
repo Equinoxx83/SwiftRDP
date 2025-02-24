@@ -447,7 +447,7 @@ class RDPApp(tk.Tk):
 
     def show_patch_note_dialog(self, content, show_checkbox=True):
         dialog = tk.Toplevel(self)
-        dialog.iconphoto(False, self.logo)  # Utilise l'icône de l'application
+        dialog.iconphoto(False, self.logo)
         dialog.title(t("patch_note"))
         dialog.geometry("800x600")
         dialog.configure(bg=self.theme["bg"])
@@ -459,16 +459,16 @@ class RDPApp(tk.Tk):
         var_hide = tk.BooleanVar()
         if show_checkbox:
             check = tk.Checkbutton(dialog, text=t("dont_show_again"), variable=var_hide,
-                                   bg=self.theme["bg"], fg=self.theme["fg"], font=self.font_main)
+                                   bg=self.theme["bg"], fg=self.theme["fg"], font=("Segoe Script", 14))
             check.pack(anchor="w", padx=10, pady=5)
         def close_dialog():
             if show_checkbox and var_hide.get():
-                with open("CHANGELOGHIDE", "w", encoding="utf-8") as f:
+                # Enregistrement du choix dans le fichier de masquage
+                with open("/opt/FastRDP/CHANGELOGHIDE", "w", encoding="utf-8") as f:
                     f.write(get_version())
             dialog.destroy()
         tk.Button(dialog, text=t("return"), command=close_dialog, font=self.font_main,
-                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(pady=10)
-
+                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(pady=10)
 
     def add_group(self, parent, combobox, var):
         new_grp = simpledialog.askstring(t("new_group"), t("enter_new_group"), parent=parent)
@@ -902,8 +902,10 @@ class RDPApp(tk.Tk):
         tk.Button(btn_frame, text=t("support_option"), command=lambda: webbrowser.open("https://github.com/Equinoxx83/FastRDP/issues"), font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
         # Bouton pour afficher le patch note
-        tk.Button(btn_frame, text=t("view_patch_note"), command=lambda: self.show_patch_note_dialog(read_patch_note()), font=self.font_main,
-                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
+        tk.Button(btn_frame, text=t("view_patch_note"),
+          command=lambda: self.show_patch_note_dialog(read_patch_note(), show_checkbox=False),
+          font=self.font_main, bg=self.theme["button_bg"], fg=self.theme["button_fg"],
+          relief="flat", width=30).pack(pady=5)
         # Bouton Préférences dans Options
         tk.Button(btn_frame, text=t("preferences"), command=self.preferences_menu, font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
