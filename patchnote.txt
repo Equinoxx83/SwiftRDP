@@ -1,6 +1,0 @@
-- addition of the English language
-- Added the Preference sub menu in options
-- Passage sous github = updates
-- AJout of the choice of the theme in the sub menu preference
-- Block duplicates for the name field
-- Added a warning in case of IP duplicates
