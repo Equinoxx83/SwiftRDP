@@ -84,12 +84,12 @@ from datetime import datetime
 LANGUAGE_FILE = "language.conf"
 THEME_FILE = "theme.conf"
 if os.path.exists(LANGUAGE_FILE):
-    with open(LANGUAGE_FILE, "r") as f:
+    with open(LANGUAGE_FILE, "r", encoding="utf-8") as f:
          CURRENT_LANG = f.read().strip()
 else:
     CURRENT_LANG = "fr"
 if os.path.exists(THEME_FILE):
-    with open(THEME_FILE, "r") as f:
+    with open(THEME_FILE, "r", encoding="utf-8") as f:
          CURRENT_THEME = f.read().strip()
 else:
     CURRENT_THEME = "dark"
@@ -116,7 +116,7 @@ def get_theme():
              "tree_fg": "#c0c0c0"
          }
 
-# --- Dictionnaire de traductions ---
+# --- Traductions ---
 translations = {
     "fr": {
          "title": "FastRDP",
@@ -128,6 +128,10 @@ translations = {
          "manage_groups": "Gérer Groupes",
          "options": "Options",
          "preferences": "Préférences",
+         "patch_note": "Notes de mise à jour",
+         "dont_show_again": "Ne plus afficher",
+         "view_patch_note": "Voir les notes de mise à jour",
+         "patch_note_empty": "Aucune note de mise à jour disponible.",
          "error": "Erreur",
          "warning": "Avertissement",
          "info": "Info",
@@ -137,7 +141,7 @@ translations = {
          "warning_duplicate_ip": "L'IP '{ip}' est déjà enregistrée. Voulez-vous continuer ?",
          "connection_added": "Connexion ajoutée.",
          "connection_modified": "Connexion modifiée.",
-         "language_saved_restart": "La langue a été enregistrée. L'application va redémarrer automatiquement.",
+         "language_saved_restart": "La langue et/ou le thème ont été enregistrés. L'application va redémarrer automatiquement.",
          "new_version_available": "Une nouvelle version est disponible. Voulez-vous mettre à jour FastRDP ?",
          "no_update_available": "Aucune mise à jour disponible.",
          "update_failed": "La mise à jour a échoué",
@@ -198,6 +202,10 @@ translations = {
          "manage_groups": "Manage Groups",
          "options": "Options",
          "preferences": "Preferences",
+         "patch_note": "Patch Notes",
+         "dont_show_again": "Don't show again",
+         "view_patch_note": "View Patch Notes",
+         "patch_note_empty": "No patch notes available.",
          "error": "Error",
          "warning": "Warning",
          "info": "Info",
@@ -207,7 +215,7 @@ translations = {
          "warning_duplicate_ip": "The IP '{ip}' already exists. Do you want to continue?",
          "connection_added": "Connection added.",
          "connection_modified": "Connection modified.",
-         "language_saved_restart": "Language saved. The application will restart automatically.",
+         "language_saved_restart": "Language and/or theme saved. The application will restart automatically.",
          "new_version_available": "A new version is available. Do you want to update FastRDP?",
          "no_update_available": "No update available.",
          "update_failed": "Update failed",
@@ -264,7 +272,7 @@ def t(key, **kwargs):
     text = translations.get(CURRENT_LANG, translations["fr"]).get(key, key)
     return text.format(**kwargs)
 
-# --- Fichiers de données et fichier de version ---
+# --- Fichiers de données et version ---
 FILE_CONNS = "connexions.txt"
 GROUPS_FILE = "groups.txt"
 VERSION_FILE = "/opt/FastRDP/version.txt"  # Ce fichier doit être géré dans votre dépôt
@@ -281,7 +289,7 @@ def format_note(note):
 
 def load_connections():
     conns = []
-    with open(FILE_CONNS, "r") as f:
+    with open(FILE_CONNS, "r", encoding="utf-8") as f:
         for line in f:
             line = line.rstrip("\n")
             if not line:
@@ -295,7 +303,7 @@ def load_connections():
     return conns
 
 def save_connections(data):
-    with open(FILE_CONNS, "w") as f:
+    with open(FILE_CONNS, "w", encoding="utf-8") as f:
         for row in data:
             row[4] = row[4].replace("\n", "<NL>")
             f.write("|".join(row) + "\n")
@@ -315,7 +323,7 @@ def delete_connection(key):
 
 def load_groups():
     groups = []
-    with open(GROUPS_FILE, "r") as f:
+    with open(GROUPS_FILE, "r", encoding="utf-8") as f:
         for line in f:
             group = line.strip()
             if group:
@@ -323,7 +331,7 @@ def load_groups():
     return groups
 
 def save_groups(groups):
-    with open(GROUPS_FILE, "w") as f:
+    with open(GROUPS_FILE, "w", encoding="utf-8") as f:
         for group in groups:
             f.write(group + "\n")
 
@@ -365,10 +373,10 @@ def delete_configuration():
     conn_deleted = False
     group_deleted = False
     if messagebox.askyesno(t("confirm"), t("delete_all_connections"), parent=root):
-        open(FILE_CONNS, "w").close()
+        open(FILE_CONNS, "w", encoding="utf-8").close()
         conn_deleted = True
     if messagebox.askyesno(t("confirm"), t("delete_all_groups"), parent=root):
-        open(GROUPS_FILE, "w").close()
+        open(GROUPS_FILE, "w", encoding="utf-8").close()
         data = load_connections()
         for i, row in enumerate(data):
             row[5] = ""
@@ -391,64 +399,20 @@ def window_exists(root, title):
             return True
     return False
 
-# --- Vérification de mise à jour via GitHub ---
-def check_for_update(app, from_menu=False):
-    repo_url = "https://github.com/Equinoxx83/FastRDP.git"
-    temp_dir = tempfile.mkdtemp()
+# --- Fonctions pour le patch note ---
+def get_version():
     try:
-        subprocess.check_call(["git", "clone", "--depth", "1", repo_url, temp_dir])
-        remote_version_file = os.path.join(temp_dir, "version.txt")
-        if not os.path.exists(remote_version_file):
-            remote_version = ""
-        else:
-            with open(remote_version_file, "r") as f:
-                remote_version = f.read().strip()
-    except Exception:
-        remote_version = ""
-    finally:
-        shutil.rmtree(temp_dir)
-    try:
-        with open(VERSION_FILE, "r") as vf:
-            local_version = vf.read().strip()
-    except Exception:
-        local_version = ""
-    if remote_version and remote_version != local_version:
-        if messagebox.askyesno(t("update_option"), t("new_version_available"), parent=app):
-            update_app(app, repo_url, remote_version)
-    else:
-        if from_menu:
-            messagebox.showinfo(t("update_option"), t("no_update_available"), parent=app)
+        with open(VERSION_FILE, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except:
+        return ""
 
-def update_app(app, repo_url, remote_version):
-    temp_dir = tempfile.mkdtemp()
-    try:
-        subprocess.check_call(["git", "clone", "--depth", "1", repo_url, temp_dir])
-        dest_dir = "/opt/FastRDP"
-        for item in os.listdir(dest_dir):
-            s = os.path.join(dest_dir, item)
-            if os.path.isdir(s):
-                shutil.rmtree(s)
-            else:
-                os.remove(s)
-        for item in os.listdir(temp_dir):
-            s = os.path.join(temp_dir, item)
-            d = os.path.join(dest_dir, item)
-            if os.path.isdir(s):
-                shutil.copytree(s, d)
-            else:
-                shutil.copy2(s, d)
-        with open(os.path.join(dest_dir, "version.txt"), "w") as vf:
-            vf.write(remote_version)
-        os.chmod(os.path.join(dest_dir, "FastRDP.sh"), 0o755)
-    except Exception as e:
-        messagebox.showerror(t("error"), f"{t('update_failed')}\n{e}", parent=app)
-        return
-    finally:
-        shutil.rmtree(temp_dir)
-    messagebox.showinfo(t("update_option"), t("update_complete"), parent=app)
-    subprocess.Popen(["/bin/bash", "/opt/FastRDP/FastRDP.sh"])
-    app.destroy()
-    sys.exit(0)
+def read_patch_note():
+    if os.path.exists("CHANGELOG"):
+        with open("CHANGELOG", "r", encoding="utf-8") as f:
+            content = f.read().strip()
+            return content if content else t("patch_note_empty")
+    return t("patch_note_empty")
 
 class RDPApp(tk.Tk):
     def __init__(self):
@@ -463,7 +427,43 @@ class RDPApp(tk.Tk):
         self.font_heading = ("Segoe Script", 12)
         self.create_widgets()
         self.refresh_table()
-        threading.Thread(target=check_for_update, args=(self,), daemon=True).start()
+        threading.Thread(target=check_for_update, args=(self, ), daemon=True).start()
+        # Vérifie et affiche automatiquement le patch note si nécessaire
+        self.check_and_show_patch_note()
+
+    def check_and_show_patch_note(self):
+        content = read_patch_note()
+        if not content or content == t("patch_note_empty"):
+            return
+        hide_file = "CHANGELOGHIDE"
+        current_version = get_version()
+        if os.path.exists(hide_file):
+            with open(hide_file, "r", encoding="utf-8") as f:
+                hidden_version = f.read().strip()
+            if hidden_version == current_version:
+                return
+        self.show_patch_note_dialog(content)
+
+    def show_patch_note_dialog(self, content):
+        dialog = tk.Toplevel(self)
+        dialog.title(t("patch_note"))
+        dialog.geometry("600x400")
+        dialog.configure(bg=self.theme["bg"])
+        text = tk.Text(dialog, wrap=tk.WORD, font=self.font_main, bg=self.theme["entry_bg"], fg=self.theme["fg"])
+        text.insert(tk.END, content)
+        text.config(state="disabled")
+        text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        var_hide = tk.BooleanVar()
+        check = tk.Checkbutton(dialog, text=t("dont_show_again"), variable=var_hide,
+                                bg=self.theme["bg"], fg=self.theme["fg"], font=self.font_main)
+        check.pack(anchor="w", padx=10, pady=5)
+        def close_dialog():
+            if var_hide.get():
+                with open("CHANGELOGHIDE", "w", encoding="utf-8") as f:
+                    f.write(get_version())
+            dialog.destroy()
+        tk.Button(dialog, text=t("return"), command=close_dialog, font=self.font_main,
+                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(pady=10)
 
     def add_group(self, parent, combobox, var):
         new_grp = simpledialog.askstring(t("new_group"), t("enter_new_group"), parent=parent)
@@ -471,7 +471,7 @@ class RDPApp(tk.Tk):
             groups = get_existing_groups()
             if new_grp not in groups:
                 groups.append(new_grp)
-                with open(GROUPS_FILE, "a") as gf:
+                with open(GROUPS_FILE, "a", encoding="utf-8") as gf:
                     gf.write(new_grp + "\n")
             combobox["values"] = groups
             var.set(new_grp)
@@ -483,14 +483,13 @@ class RDPApp(tk.Tk):
         tk.Label(search_frame, text=t("search"), font=self.font_main, bg=self.theme["bg"], fg=self.theme["fg"]).pack(side=tk.LEFT)
         self.search_var = tk.StringVar()
         self.search_var.trace("w", lambda *args: self.refresh_table())
-        tk.Entry(search_frame, textvariable=self.search_var, font=self.font_main, bg=self.theme["entry_bg"], fg=self.theme["fg"],
-                 insertbackground=self.theme["fg"], relief="flat").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
+        tk.Entry(search_frame, textvariable=self.search_var, font=self.font_main, bg=self.theme["entry_bg"],
+                 fg=self.theme["fg"], insertbackground=self.theme["fg"], relief="flat").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
         columns = (t("name").strip(":"), t("ip").strip(":"), t("login").strip(":"), t("last_connection"), t("add_note").strip(), t("group").strip(":"))
         style = ttk.Style(self)
         style.theme_use("clam")
-        style.configure("Treeview", background=self.theme["tree_bg"], fieldbackground=self.theme["tree_bg"], foreground=self.theme["tree_fg"],
-                        font=self.font_main, borderwidth=0)
-        # Pour l'en-tête, utiliser un fond clair si le thème est light
+        style.configure("Treeview", background=self.theme["tree_bg"], fieldbackground=self.theme["tree_bg"],
+                        foreground=self.theme["tree_fg"], font=self.font_main, borderwidth=0)
         heading_bg = "#e0e0e0" if CURRENT_THEME == "light" else "#1b1b1b"
         style.configure("Treeview.Heading", font=self.font_heading, background=heading_bg,
                         foreground=self.theme["fg"], relief="ridge", borderwidth=1)
@@ -854,7 +853,7 @@ class RDPApp(tk.Tk):
                 groups = get_existing_groups()
                 if new_grp not in groups:
                     groups.append(new_grp)
-                    with open(GROUPS_FILE, "a") as gf:
+                    with open(GROUPS_FILE, "a", encoding="utf-8") as gf:
                         gf.write(new_grp + "\n")
                     listbox.insert(tk.END, new_grp)
         def delete_selected():
@@ -868,9 +867,12 @@ class RDPApp(tk.Tk):
                 listbox.delete(sel[0])
                 messagebox.showinfo(t("info"), f"{grp} {t('delete')}.\nLes connexions l'utilisant seront vidées.", parent=top)
                 self.refresh_table()
-        tk.Button(btn_frame, text=t("add_group_option"), command=add_new_group, font=self.font_main, bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=10)
-        tk.Button(btn_frame, text=t("delete"), command=delete_selected, font=self.font_main, bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=10)
-        tk.Button(btn_frame, text=t("return"), command=top.destroy, font=self.font_main, bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text=t("add_group_option"), command=add_new_group, font=self.font_main,
+                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text=t("delete"), command=delete_selected, font=self.font_main,
+                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text=t("return"), command=top.destroy, font=self.font_main,
+                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=10)
 
     def options_menu(self):
         if window_exists(self, t("options")):
@@ -878,7 +880,7 @@ class RDPApp(tk.Tk):
         top = tk.Toplevel(self)
         top.iconphoto(False, self.logo)
         top.title(t("options"))
-        top.geometry("450x350")
+        top.geometry("450x380")
         top.configure(bg=self.theme["bg"])
         btn_frame = tk.Frame(top, bg=self.theme["bg"])
         btn_frame.pack(expand=True, fill=tk.BOTH, pady=10)
@@ -893,6 +895,9 @@ class RDPApp(tk.Tk):
         tk.Button(btn_frame, text=t("update_option"), command=lambda: threading.Thread(target=check_for_update, args=(self, True), daemon=True).start(), font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
         tk.Button(btn_frame, text=t("support_option"), command=lambda: webbrowser.open("https://github.com/Equinoxx83/FastRDP/issues"), font=self.font_main,
+                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
+        # Bouton pour afficher le patch note
+        tk.Button(btn_frame, text=t("view_patch_note"), command=lambda: self.show_patch_note_dialog(read_patch_note()), font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
         # Bouton Préférences dans Options
         tk.Button(btn_frame, text=t("preferences"), command=self.preferences_menu, font=self.font_main,
@@ -932,9 +937,9 @@ class RDPApp(tk.Tk):
             if changed:
                 CURRENT_LANG = new_lang
                 CURRENT_THEME = new_theme
-                with open(LANGUAGE_FILE, "w") as f:
+                with open(LANGUAGE_FILE, "w", encoding="utf-8") as f:
                     f.write(CURRENT_LANG)
-                with open(THEME_FILE, "w") as f:
+                with open(THEME_FILE, "w", encoding="utf-8") as f:
                     f.write(CURRENT_THEME)
                 messagebox.showinfo(t("info"), t("language_saved_restart"), parent=top)
                 top.destroy()
@@ -973,10 +978,10 @@ class RDPApp(tk.Tk):
     def delete_configuration(self):
         conn_deleted = messagebox.askyesno(t("confirm"), "Voulez-vous supprimer toutes les connexions ?", parent=self)
         if conn_deleted:
-            open(FILE_CONNS, "w").close()
+            open(FILE_CONNS, "w", encoding="utf-8").close()
         group_deleted = messagebox.askyesno(t("confirm"), "Voulez-vous supprimer tous les groupes ?", parent=self)
         if group_deleted:
-            open(GROUPS_FILE, "w").close()
+            open(GROUPS_FILE, "w", encoding="utf-8").close()
             data = load_connections()
             for i, row in enumerate(data):
                 row[5] = ""
@@ -1020,6 +1025,64 @@ class RDPApp(tk.Tk):
         messagebox.showinfo(t("info"), "Note mise à jour.", parent=top)
         top.destroy()
         self.refresh_table()
+
+def check_for_update(app, from_menu=False):
+    repo_url = "https://github.com/Equinoxx83/FastRDP.git"
+    temp_dir = tempfile.mkdtemp()
+    try:
+        subprocess.check_call(["git", "clone", "--depth", "1", repo_url, temp_dir])
+        remote_version_file = os.path.join(temp_dir, "version.txt")
+        if not os.path.exists(remote_version_file):
+            remote_version = ""
+        else:
+            with open(remote_version_file, "r", encoding="utf-8") as f:
+                remote_version = f.read().strip()
+    except Exception:
+        remote_version = ""
+    finally:
+        shutil.rmtree(temp_dir)
+    try:
+        with open(VERSION_FILE, "r", encoding="utf-8") as vf:
+            local_version = vf.read().strip()
+    except Exception:
+        local_version = ""
+    if remote_version and remote_version != local_version:
+        if messagebox.askyesno(t("update_option"), t("new_version_available"), parent=app):
+            update_app(app, repo_url, remote_version)
+    else:
+        if from_menu:
+            messagebox.showinfo(t("update_option"), t("no_update_available"), parent=app)
+
+def update_app(app, repo_url, remote_version):
+    temp_dir = tempfile.mkdtemp()
+    try:
+        subprocess.check_call(["git", "clone", "--depth", "1", repo_url, temp_dir])
+        dest_dir = "/opt/FastRDP"
+        for item in os.listdir(dest_dir):
+            s = os.path.join(dest_dir, item)
+            if os.path.isdir(s):
+                shutil.rmtree(s)
+            else:
+                os.remove(s)
+        for item in os.listdir(temp_dir):
+            s = os.path.join(temp_dir, item)
+            d = os.path.join(dest_dir, item)
+            if os.path.isdir(s):
+                shutil.copytree(s, d)
+            else:
+                shutil.copy2(s, d)
+        with open(os.path.join(dest_dir, "version.txt"), "w", encoding="utf-8") as vf:
+            vf.write(remote_version)
+        os.chmod(os.path.join(dest_dir, "FastRDP.sh"), 0o755)
+    except Exception as e:
+        messagebox.showerror(t("error"), f"{t('update_failed')}\n{e}", parent=app)
+        return
+    finally:
+        shutil.rmtree(temp_dir)
+    messagebox.showinfo(t("update_option"), t("update_complete"), parent=app)
+    subprocess.Popen(["/bin/bash", "/opt/FastRDP/FastRDP.sh"])
+    app.destroy()
+    sys.exit(0)
 
 if __name__ == "__main__":
     root = RDPApp()
