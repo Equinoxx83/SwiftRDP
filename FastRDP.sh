@@ -408,7 +408,7 @@ def get_version():
         return ""
 
 def read_patch_note():
-    changelog_path = "/opt/Fastrdp/CHANGELOG"
+    changelog_path = "/opt/FastRDP/CHANGELOG"
     if os.path.exists(changelog_path):
         with open(changelog_path, "r", encoding="utf-8") as f:
             content = f.read().strip()
@@ -436,7 +436,7 @@ class RDPApp(tk.Tk):
         content = read_patch_note()
         if not content or content == t("patch_note_empty"):
             return
-        hide_file = "/opt/Fastrdp/CHANGELOGHIDE"  # chemin absolu
+        hide_file = "/opt/FastRDP/CHANGELOGHIDE"  # chemin absolu
         current_version = get_version()
         if os.path.exists(hide_file):
             with open(hide_file, "r", encoding="utf-8") as f:
@@ -1076,8 +1076,8 @@ def update_app(app, repo_url, remote_version):
             vf.write(remote_version)
         os.chmod(os.path.join(dest_dir, "FastRDP.sh"), 0o755)
         # Supprimer le fichier de masquage pour forcer l'affichage du patch note pour la nouvelle version
-        if os.path.exists("/opt/Fastrdp/CHANGELOGHIDE"):
-            os.remove("/opt/Fastrdp/CHANGELOGHIDE")
+        if os.path.exists("/opt/FastRDP/CHANGELOGHIDE"):
+            os.remove("/opt/FastRDP/CHANGELOGHIDE")
     except Exception as e:
         messagebox.showerror(t("error"), f"{t('update_failed')}\n{e}", parent=app)
         return
