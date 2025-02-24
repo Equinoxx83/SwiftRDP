@@ -443,28 +443,32 @@ class RDPApp(tk.Tk):
                 hidden_version = f.read().strip()
             if hidden_version == current_version:
                 return
-        self.show_patch_note_dialog(content)
+        self.show_patch_note_dialog(content)  # par défaut show_checkbox=True
 
-    def show_patch_note_dialog(self, content):
+    def show_patch_note_dialog(self, content, show_checkbox=True):
         dialog = tk.Toplevel(self)
+        dialog.iconphoto(False, self.logo)  # Utilise l'icône de l'application
         dialog.title(t("patch_note"))
         dialog.geometry("600x400")
         dialog.configure(bg=self.theme["bg"])
-        text = tk.Text(dialog, wrap=tk.WORD, font=self.font_main, bg=self.theme["entry_bg"], fg=self.theme["fg"])
+        text = tk.Text(dialog, wrap=tk.WORD, font=self.font_main,
+                       bg=self.theme["entry_bg"], fg=self.theme["fg"])
         text.insert(tk.END, content)
         text.config(state="disabled")
         text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         var_hide = tk.BooleanVar()
-        check = tk.Checkbutton(dialog, text=t("dont_show_again"), variable=var_hide,
-                                bg=self.theme["bg"], fg=self.theme["fg"], font=self.font_main)
-        check.pack(anchor="w", padx=10, pady=5)
+        if show_checkbox:
+            check = tk.Checkbutton(dialog, text=t("dont_show_again"), variable=var_hide,
+                                   bg=self.theme["bg"], fg=self.theme["fg"], font=self.font_main)
+            check.pack(anchor="w", padx=10, pady=5)
         def close_dialog():
-            if var_hide.get():
+            if show_checkbox and var_hide.get():
                 with open("CHANGELOGHIDE", "w", encoding="utf-8") as f:
                     f.write(get_version())
             dialog.destroy()
         tk.Button(dialog, text=t("return"), command=close_dialog, font=self.font_main,
-                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(pady=10)
+                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(pady=10)
+
 
     def add_group(self, parent, combobox, var):
         new_grp = simpledialog.askstring(t("new_group"), t("enter_new_group"), parent=parent)
