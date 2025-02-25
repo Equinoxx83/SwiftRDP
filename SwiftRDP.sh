@@ -81,13 +81,13 @@ import subprocess, os, zipfile, shutil, tempfile, threading, time, webbrowser, s
 from datetime import datetime
 
 # --- Dossiers de configuration et du projet ---
-PROJECT_DIR = "/opt/SwiftRDP"  # Fichiers du projet (inchangeables)
+PROJECT_DIR = "/opt/SwiftRDP"  # Fichiers du projet (inchangés)
 CONFIG_DIR  = "/usr/local/share/appdata/.SwiftRDP"  # Fichiers de configuration
 
-# Créer le dossier de config s'il n'existe pas et modifier ses permissions
+# Créer CONFIG_DIR s'il n'existe pas et ajuster les permissions
 if not os.path.exists(CONFIG_DIR):
     os.makedirs(CONFIG_DIR, exist_ok=True)
-    subprocess.call(["sudo", "chown", "-R", os.environ.get("USER"), CONFIG_DIR])
+    subprocess.call(["sudo", "chown", "-R", f"{os.environ.get('USER')}:{os.environ.get('USER')}", CONFIG_DIR])
 
 # --- Définition des chemins ---
 LANGUAGE_FILE    = os.path.join(CONFIG_DIR, "language.conf")
@@ -155,7 +155,6 @@ def get_theme():
          }
 
 # --- Traductions ---
-# Ajout de la clé "save" pour les boutons d'enregistrement
 translations = {
     "fr": {
          "title": "SwiftRDP",
@@ -233,7 +232,7 @@ translations = {
          "shortcuts": "Raccourcis",
          "resize_shortcut": "Redimensionner (plein hauteur, moitié largeur)",
          "switch_shortcut": "Switcher entre connexions",
-         "set_password": "Définir / modifier le mot de passe de l'application",
+         "set_password": "Définir/modifier mot de passe SwiftRDP",
          "save": "Enregistrer"
     },
     "en": {
@@ -312,7 +311,7 @@ translations = {
          "shortcuts": "Shortcuts",
          "resize_shortcut": "Resize (full height, half width)",
          "switch_shortcut": "Switch between connections",
-         "set_password": "Set/Change Application Password",
+         "set_password": "Set/Change SwiftRDP Password",
          "save": "Save"
     }
 }
@@ -322,10 +321,9 @@ def t(key, **kwargs):
     return text.format(**kwargs)
 
 # --- Les fichiers de configuration sont dans CONFIG_DIR, les autres dans PROJECT_DIR ---
-# CONFIG_DIR : language.conf, theme.conf, connexions.txt, groups.txt, password.conf, shortcuts.conf
-# PROJECT_DIR : CHANGELOG, CHANGELOGHIDE, icon.png, SwiftRDP.desktop, SwiftRDP.sh, version.txt
+PROJECT_DIR = "/opt/SwiftRDP"
 
-# On laisse l'icône dans PROJECT_DIR
+# On conserve l'icône dans PROJECT_DIR
 ICON_FILE = os.path.join(PROJECT_DIR, "icon.png")
 
 # Assurer l'existence des fichiers de base pour connexions et groupes
@@ -464,11 +462,17 @@ def read_patch_note():
             return content if content else t("patch_note_empty")
     return t("patch_note_empty")
 
-# --- Fonctions pour les raccourcis (stubs à adapter) ---
-def resize_rdp_window():
-    subprocess.call(["wmctrl", "-r", "SwiftRDP", "-e", "0,0,0,-1,-1"])
-def switch_rdp_window():
-    subprocess.call(["wmctrl", "-a", "SwiftRDP"])
+# --- Fonctions pour les raccourcis ---
+def resize_rdp_window(root):
+    screen_width = root.winfo_screenwidth()
+    screen_height = root.winfo_screenheight()
+    new_width = screen_width // 2
+    new_height = screen_height
+    # On utilise "SwiftRDP:" comme partie commune du titre
+    subprocess.call(["wmctrl", "-r", "SwiftRDP:", "-e", f"0,0,0,{new_width},{new_height}"])
+
+def switch_rdp_window(root):
+    subprocess.call(["wmctrl", "-a", "SwiftRDP:"])
 
 class RDPApp(tk.Tk):
     def __init__(self):
@@ -484,10 +488,10 @@ class RDPApp(tk.Tk):
         self.create_widgets()
         self.refresh_table()
         threading.Thread(target=check_for_update, args=(self, ), daemon=True).start()
-        self.check_and_show_patch_note()  # ouverture automatique avec case à cocher
-        # Bind des raccourcis par défaut
-        self.bind_all("<Control-Alt-r>", lambda event: resize_rdp_window())
-        self.bind_all("<Control-Alt-s>", lambda event: switch_rdp_window())
+        self.check_and_show_patch_note()  # Affichage automatique du patch note avec case à cocher
+        # Rebind des raccourcis en passant la fenêtre courante
+        self.bind_all("<Control-Alt-r>", lambda event: resize_rdp_window(self))
+        self.bind_all("<Control-Alt-s>", lambda event: switch_rdp_window(self))
 
     def check_and_show_patch_note(self):
         content = read_patch_note()
@@ -981,8 +985,8 @@ class RDPApp(tk.Tk):
         def save_shortcuts():
             self.unbind_all("<Control-Alt-r>")
             self.unbind_all("<Control-Alt-s>")
-            self.bind_all("<Control-Alt-r>", lambda event: resize_rdp_window())
-            self.bind_all("<Control-Alt-s>", lambda event: switch_rdp_window())
+            self.bind_all("<Control-Alt-r>", lambda event: resize_rdp_window(self))
+            self.bind_all("<Control-Alt-s>", lambda event: switch_rdp_window(self))
             messagebox.showinfo(t("info"), "Raccourcis enregistrés.", parent=top)
             top.destroy()
         tk.Button(top, text=t("save"), command=save_shortcuts, font=self.font_main,
@@ -1049,7 +1053,6 @@ class RDPApp(tk.Tk):
         if pwd1 is None:
             return
         if pwd1 == "":
-            # Supprimer le mot de passe
             if os.path.exists(PASSWORD_FILE):
                 os.remove(PASSWORD_FILE)
             messagebox.showinfo("Info", "Mot de passe supprimé.", parent=self)
