@@ -1,5 +1,5 @@
 [Desktop Entry]
-Version=1.3.2
+Version=1.0
 Type=Application
 Name=SwiftRDP
 Comment=Gestionnaire de Bureau à Distance
@@ -7,3 +7,4 @@ Exec=/opt/SwiftRDP/SwiftRDP.sh
 Icon=/opt/SwiftRDP/icon.png
 Terminal=false
 Categories=Network;Utility;
+Name[fr_FR]=SwiftRDP
