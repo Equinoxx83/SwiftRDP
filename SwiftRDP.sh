@@ -44,10 +44,10 @@ if ! command -v xfreerdp >/dev/null 2>&1; then
     else
         pkg="freerdp2-x11"
     fi
-    if zenity --question --title="Dépendance manquante" --text="Le paquet '$pkg' n'est pas installé. Voulez-vous l'installer ?" --width=300; then
+    if zenity --question --title="Dépendance manquante" --text="Le paquet pour SwiftRDP n'est pas installé. Voulez-vous l'installer ?" --width=300; then
         sudo apt update && sudo apt install -y "$pkg" || exit 1
     else
-        zenity --error --text="$pkg est requis. Arrêt." --width=300
+        zenity --error --text="Le paquet SwiftRDP est requis. Arrêt." --width=300
         exit 1
     fi
 fi
@@ -154,7 +154,7 @@ translations = {
          "password": "Mot de passe",
          "enter_password_for": "Entrez le mot de passe pour",
          "no_password": "Aucun mot de passe fourni.",
-         "launch_error": "Erreur lors du lancement de xfreerdp",
+         "launch_error": "Erreur lors du lancement de SwiftRDP",
          "connecting": "Connexion en cours...",
          "please_wait": "Connexion en cours, veuillez patienter...",
          "connection_failed": "Connexion échouée",
@@ -228,7 +228,7 @@ translations = {
          "password": "Password",
          "enter_password_for": "Enter password for",
          "no_password": "No password provided.",
-         "launch_error": "Error launching xfreerdp",
+         "launch_error": "Error launching SwiftRDP",
          "connecting": "Connecting...",
          "please_wait": "Please wait while connecting...",
          "connection_failed": "Connection failed",
@@ -277,7 +277,7 @@ FILE_CONNS = "connexions.txt"
 GROUPS_FILE = "groups.txt"
 VERSION_FILE = "/opt/SwiftRDP/version.txt"  # Ce fichier doit être géré dans votre dépôt
 
-REMOTE_WINDOW_KEYWORD = "FreeRDP"
+REMOTE_WINDOW_KEYWORD = "SwiftRDP:"
 
 for file in (FILE_CONNS, GROUPS_FILE):
     if not os.path.exists(file):
@@ -608,7 +608,7 @@ class RDPApp(tk.Tk):
         try:
             proc = subprocess.Popen(
                 ["xfreerdp", f"/v:{row[1]}", f"/u:{row[2]}", f"/p:{pwd}",
-                 "/dynamic-resolution", "/cert-ignore"],
+                 "/dynamic-resolution", "/cert-ignore", f"/title:SwiftRDP: {row[1]}"],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, start_new_session=True)
         except Exception as e:
