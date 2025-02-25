@@ -77,12 +77,50 @@ cat > "$PYFILE" << 'EOF'
 #!/usr/bin/env python3
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
-import subprocess, os, zipfile, shutil, tempfile, threading, time, webbrowser, sys
+import subprocess, os, zipfile, shutil, tempfile, threading, time, webbrowser, sys, hashlib
 from datetime import datetime
 
-# --- Configuration de la langue et du thème ---
-LANGUAGE_FILE = "language.conf"
-THEME_FILE = "theme.conf"
+# --- Dossiers de configuration et du projet ---
+PROJECT_DIR = "/opt/SwiftRDP"  # Fichiers du projet (inchangeables)
+CONFIG_DIR  = "/usr/local/share/appdata/.SwiftRDP"  # Fichiers de configuration
+
+# Créer le dossier de config s'il n'existe pas et modifier ses permissions
+if not os.path.exists(CONFIG_DIR):
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    subprocess.call(["sudo", "chown", "-R", os.environ.get("USER"), CONFIG_DIR])
+
+# --- Définition des chemins ---
+LANGUAGE_FILE    = os.path.join(CONFIG_DIR, "language.conf")
+THEME_FILE       = os.path.join(CONFIG_DIR, "theme.conf")
+FILE_CONNS       = os.path.join(CONFIG_DIR, "connexions.txt")
+GROUPS_FILE      = os.path.join(CONFIG_DIR, "groups.txt")
+PASSWORD_FILE    = os.path.join(CONFIG_DIR, "password.conf")
+SHORTCUTS_FILE   = os.path.join(CONFIG_DIR, "shortcuts.conf")
+
+CHANGELOG_FILE   = os.path.join(PROJECT_DIR, "CHANGELOG")
+CHANGELOG_HIDE   = os.path.join(PROJECT_DIR, "CHANGELOGHIDE")
+VERSION_FILE     = os.path.join(PROJECT_DIR, "version.txt")
+ICON_FILE        = os.path.join(PROJECT_DIR, "icon.png")
+
+# --- Fonctions de hachage pour le mot de passe ---
+def hash_password(password):
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+# --- Protection par mot de passe au lancement ---
+def check_password():
+    if os.path.exists(PASSWORD_FILE):
+        with open(PASSWORD_FILE, "r", encoding="utf-8") as f:
+            stored_hash = f.read().strip()
+        temp = tk.Tk()
+        temp.withdraw()
+        pwd = simpledialog.askstring("Mot de passe", "Entrez le mot de passe pour lancer SwiftRDP:", show="*", parent=temp)
+        temp.destroy()
+        if not pwd or hash_password(pwd) != stored_hash:
+            messagebox.showerror("Erreur", "Mot de passe incorrect.")
+            return False
+    return True
+
+# --- Chargement ou initialisation de la configuration de langue et thème ---
 if os.path.exists(LANGUAGE_FILE):
     with open(LANGUAGE_FILE, "r", encoding="utf-8") as f:
          CURRENT_LANG = f.read().strip()
@@ -117,6 +155,7 @@ def get_theme():
          }
 
 # --- Traductions ---
+# Ajout de la clé "save" pour les boutons d'enregistrement
 translations = {
     "fr": {
          "title": "SwiftRDP",
@@ -141,7 +180,7 @@ translations = {
          "warning_duplicate_ip": "L'IP '{ip}' est déjà enregistrée. Voulez-vous continuer ?",
          "connection_added": "Connexion ajoutée.",
          "connection_modified": "Connexion modifiée.",
-         "language_saved_restart": "La langue et/ou le thème ont été enregistrés. L'application va redémarrer automatiquement.",
+         "language_saved_restart": "La langue, le thème et les raccourcis ont été enregistrés. L'application va redémarrer automatiquement.",
          "new_version_available": "Une nouvelle version est disponible. Voulez-vous mettre à jour SwiftRDP ?",
          "no_update_available": "Aucune mise à jour disponible.",
          "update_failed": "La mise à jour a échoué",
@@ -190,7 +229,12 @@ translations = {
          "language": "Langue:",
          "theme": "Thème:",
          "dark": "Sombre",
-         "light": "Clair"
+         "light": "Clair",
+         "shortcuts": "Raccourcis",
+         "resize_shortcut": "Redimensionner (plein hauteur, moitié largeur)",
+         "switch_shortcut": "Switcher entre connexions",
+         "set_password": "Définir / modifier le mot de passe de l'application",
+         "save": "Enregistrer"
     },
     "en": {
          "title": "SwiftRDP",
@@ -215,7 +259,7 @@ translations = {
          "warning_duplicate_ip": "The IP '{ip}' already exists. Do you want to continue?",
          "connection_added": "Connection added.",
          "connection_modified": "Connection modified.",
-         "language_saved_restart": "Language and/or theme saved. The application will restart automatically.",
+         "language_saved_restart": "Language, theme and shortcuts saved. The application will restart automatically.",
          "new_version_available": "A new version is available. Do you want to update SwiftRDP?",
          "no_update_available": "No update available.",
          "update_failed": "Update failed",
@@ -264,7 +308,12 @@ translations = {
          "language": "Language:",
          "theme": "Theme:",
          "dark": "Dark",
-         "light": "Light"
+         "light": "Light",
+         "shortcuts": "Shortcuts",
+         "resize_shortcut": "Resize (full height, half width)",
+         "switch_shortcut": "Switch between connections",
+         "set_password": "Set/Change Application Password",
+         "save": "Save"
     }
 }
 
@@ -272,16 +321,17 @@ def t(key, **kwargs):
     text = translations.get(CURRENT_LANG, translations["fr"]).get(key, key)
     return text.format(**kwargs)
 
-# --- Fichiers de données et version ---
-FILE_CONNS = "connexions.txt"
-GROUPS_FILE = "groups.txt"
-VERSION_FILE = "/opt/SwiftRDP/version.txt"  # Ce fichier doit être géré dans votre dépôt
+# --- Les fichiers de configuration sont dans CONFIG_DIR, les autres dans PROJECT_DIR ---
+# CONFIG_DIR : language.conf, theme.conf, connexions.txt, groups.txt, password.conf, shortcuts.conf
+# PROJECT_DIR : CHANGELOG, CHANGELOGHIDE, icon.png, SwiftRDP.desktop, SwiftRDP.sh, version.txt
 
-REMOTE_WINDOW_KEYWORD = "SwiftRDP:"
+# On laisse l'icône dans PROJECT_DIR
+ICON_FILE = os.path.join(PROJECT_DIR, "icon.png")
 
+# Assurer l'existence des fichiers de base pour connexions et groupes
 for file in (FILE_CONNS, GROUPS_FILE):
     if not os.path.exists(file):
-        open(file, "w").close()
+        open(file, "w", encoding="utf-8").close()
 
 def format_note(note):
     display = note.replace("\n", " ")
@@ -353,17 +403,17 @@ def backup_configuration(dest_path, export=False):
     zip_name = "SwiftRDPexport.zip" if export else "SwiftRDPsave.zip"
     full_path = os.path.join(dest_path, zip_name)
     with zipfile.ZipFile(full_path, 'w') as zipf:
-        for file in [FILE_CONNS, GROUPS_FILE]:
+        for file in (FILE_CONNS, GROUPS_FILE):
             if os.path.exists(file):
-                zipf.write(file)
+                zipf.write(file, os.path.basename(file))
     return full_path
 
 def import_configuration_func(zip_path):
     with tempfile.TemporaryDirectory() as tmpdirname:
         with zipfile.ZipFile(zip_path, 'r') as zipf:
             zipf.extractall(tmpdirname)
-        src_conn = os.path.join(tmpdirname, FILE_CONNS)
-        src_groups = os.path.join(tmpdirname, GROUPS_FILE)
+        src_conn = os.path.join(tmpdirname, os.path.basename(FILE_CONNS))
+        src_groups = os.path.join(tmpdirname, os.path.basename(GROUPS_FILE))
         if os.path.exists(src_conn):
             shutil.copy(src_conn, FILE_CONNS)
         if os.path.exists(src_groups):
@@ -408,18 +458,23 @@ def get_version():
         return ""
 
 def read_patch_note():
-    changelog_path = "/opt/SwiftRDP/CHANGELOG"
-    if os.path.exists(changelog_path):
-        with open(changelog_path, "r", encoding="utf-8") as f:
+    if os.path.exists(CHANGELOG_FILE):
+        with open(CHANGELOG_FILE, "r", encoding="utf-8") as f:
             content = f.read().strip()
             return content if content else t("patch_note_empty")
     return t("patch_note_empty")
+
+# --- Fonctions pour les raccourcis (stubs à adapter) ---
+def resize_rdp_window():
+    subprocess.call(["wmctrl", "-r", "SwiftRDP", "-e", "0,0,0,-1,-1"])
+def switch_rdp_window():
+    subprocess.call(["wmctrl", "-a", "SwiftRDP"])
 
 class RDPApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.theme = get_theme()
-        self.logo = tk.PhotoImage(file="/opt/SwiftRDP/icon.png")
+        self.logo = tk.PhotoImage(file=ICON_FILE)
         self.iconphoto(False, self.logo)
         self.title(t("title"))
         self.geometry("1600x900")
@@ -429,21 +484,21 @@ class RDPApp(tk.Tk):
         self.create_widgets()
         self.refresh_table()
         threading.Thread(target=check_for_update, args=(self, ), daemon=True).start()
-        # Vérifie et affiche automatiquement le patch note si nécessaire
-        self.check_and_show_patch_note()
+        self.check_and_show_patch_note()  # ouverture automatique avec case à cocher
+        # Bind des raccourcis par défaut
+        self.bind_all("<Control-Alt-r>", lambda event: resize_rdp_window())
+        self.bind_all("<Control-Alt-s>", lambda event: switch_rdp_window())
 
     def check_and_show_patch_note(self):
         content = read_patch_note()
         if not content or content == t("patch_note_empty"):
             return
-        hide_file = "/opt/SwiftRDP/CHANGELOGHIDE"  # chemin absolu
-        current_version = get_version()
-        if os.path.exists(hide_file):
-            with open(hide_file, "r", encoding="utf-8") as f:
+        if os.path.exists(CHANGELOG_HIDE):
+            with open(CHANGELOG_HIDE, "r", encoding="utf-8") as f:
                 hidden_version = f.read().strip()
-            if hidden_version == current_version:
+            if hidden_version == get_version():
                 return
-        self.show_patch_note_dialog(content)  # par défaut show_checkbox=True
+        self.show_patch_note_dialog(content)
 
     def show_patch_note_dialog(self, content, show_checkbox=True):
         dialog = tk.Toplevel(self)
@@ -465,8 +520,7 @@ class RDPApp(tk.Tk):
             check.pack(anchor="w", padx=10, pady=5)
         def close_dialog():
             if show_checkbox and var_hide.get():
-                # Enregistrement du choix dans le fichier de masquage
-                with open("/opt/SwiftRDP/CHANGELOGHIDE", "w", encoding="utf-8") as f:
+                with open(CHANGELOG_HIDE, "w", encoding="utf-8") as f:
                     f.write(get_version())
             dialog.destroy()
         tk.Button(dialog, text=t("return"), command=close_dialog, font=self.font_main,
@@ -658,7 +712,7 @@ class RDPApp(tk.Tk):
                     output = subprocess.check_output(["wmctrl", "-l"], text=True)
                 except Exception:
                     output = ""
-                if REMOTE_WINDOW_KEYWORD.lower() in output.lower():
+                if "swiftrdp:" in output.lower():
                     found = True
                     break
                 time.sleep(interval)
@@ -887,7 +941,7 @@ class RDPApp(tk.Tk):
         top = tk.Toplevel(self)
         top.iconphoto(False, self.logo)
         top.title(t("options"))
-        top.geometry("450x380")
+        top.geometry("450x420")
         top.configure(bg=self.theme["bg"])
         btn_frame = tk.Frame(top, bg=self.theme["bg"])
         btn_frame.pack(expand=True, fill=tk.BOTH, pady=10)
@@ -903,14 +957,36 @@ class RDPApp(tk.Tk):
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
         tk.Button(btn_frame, text=t("support_option"), command=lambda: webbrowser.open("https://github.com/Equinoxx83/SwiftRDP/issues"), font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
-        # Bouton pour afficher le patch note
         tk.Button(btn_frame, text=t("view_patch_note"),
           command=lambda: self.show_patch_note_dialog(read_patch_note(), show_checkbox=False),
           font=self.font_main, bg=self.theme["button_bg"], fg=self.theme["button_fg"],
           relief="flat", width=30).pack(pady=5)
-        # Bouton Préférences dans Options
+        tk.Button(btn_frame, text=t("shortcuts"), command=self.shortcuts_menu, font=self.font_main,
+                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
         tk.Button(btn_frame, text=t("preferences"), command=self.preferences_menu, font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
+
+    def shortcuts_menu(self):
+        top = tk.Toplevel(self)
+        top.iconphoto(False, self.logo)
+        top.title(t("shortcuts"))
+        top.geometry("400x220")
+        top.configure(bg=self.theme["bg"])
+        tk.Label(top, text=t("resize_shortcut"), font=self.font_main, bg=self.theme["bg"], fg=self.theme["fg"]).pack(anchor="w", padx=10, pady=5)
+        resize_var = tk.StringVar(value="Ctrl+Alt+R")
+        tk.Entry(top, textvariable=resize_var, font=self.font_main, bg=self.theme["entry_bg"], fg=self.theme["fg"]).pack(fill=tk.X, padx=10)
+        tk.Label(top, text=t("switch_shortcut"), font=self.font_main, bg=self.theme["bg"], fg=self.theme["fg"]).pack(anchor="w", padx=10, pady=5)
+        switch_var = tk.StringVar(value="Ctrl+Alt+S")
+        tk.Entry(top, textvariable=switch_var, font=self.font_main, bg=self.theme["entry_bg"], fg=self.theme["fg"]).pack(fill=tk.X, padx=10)
+        def save_shortcuts():
+            self.unbind_all("<Control-Alt-r>")
+            self.unbind_all("<Control-Alt-s>")
+            self.bind_all("<Control-Alt-r>", lambda event: resize_rdp_window())
+            self.bind_all("<Control-Alt-s>", lambda event: switch_rdp_window())
+            messagebox.showinfo(t("info"), "Raccourcis enregistrés.", parent=top)
+            top.destroy()
+        tk.Button(top, text=t("save"), command=save_shortcuts, font=self.font_main,
+                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(pady=10)
 
     def preferences_menu(self):
         if window_exists(self, t("preferences")):
@@ -918,9 +994,8 @@ class RDPApp(tk.Tk):
         top = tk.Toplevel(self)
         top.iconphoto(False, self.logo)
         top.title(t("preferences"))
-        top.geometry("350x250")
+        top.geometry("370x330")
         top.configure(bg=self.theme["bg"])
-        # Choix de la langue
         lang_frame = tk.Frame(top, bg=self.theme["bg"])
         lang_frame.pack(pady=10)
         tk.Label(lang_frame, text=t("language"), font=self.font_main, bg=self.theme["bg"], fg=self.theme["fg"]).pack(anchor="w", padx=10)
@@ -929,7 +1004,6 @@ class RDPApp(tk.Tk):
                        bg=self.theme["bg"], fg=self.theme["fg"], font=self.font_main).pack(anchor="w", padx=20)
         tk.Radiobutton(lang_frame, text="English", variable=lang_var, value="en",
                        bg=self.theme["bg"], fg=self.theme["fg"], font=self.font_main).pack(anchor="w", padx=20)
-        # Choix du thème
         theme_frame = tk.Frame(top, bg=self.theme["bg"])
         theme_frame.pack(pady=10)
         tk.Label(theme_frame, text=t("theme"), font=self.font_main, bg=self.theme["bg"], fg=self.theme["fg"]).pack(anchor="w", padx=10)
@@ -938,6 +1012,10 @@ class RDPApp(tk.Tk):
                        bg=self.theme["bg"], fg=self.theme["fg"], font=self.font_main).pack(anchor="w", padx=20)
         tk.Radiobutton(theme_frame, text=t("light"), variable=theme_var, value="light",
                        bg=self.theme["bg"], fg=self.theme["fg"], font=self.font_main).pack(anchor="w", padx=20)
+        sec_frame = tk.Frame(top, bg=self.theme["bg"])
+        sec_frame.pack(pady=10)
+        tk.Button(sec_frame, text=t("set_password"), command=lambda: self.set_app_password(), font=self.font_main,
+                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack()
         def save_preferences():
             global CURRENT_LANG, CURRENT_THEME
             new_lang = lang_var.get()
@@ -952,13 +1030,41 @@ class RDPApp(tk.Tk):
                     f.write(CURRENT_THEME)
                 messagebox.showinfo(t("info"), t("language_saved_restart"), parent=top)
                 top.destroy()
-                subprocess.Popen(["/bin/bash", "/opt/SwiftRDP/SwiftRDP.sh"])
+                subprocess.Popen(["/bin/bash", os.path.join(PROJECT_DIR, "SwiftRDP.sh")])
                 self.destroy()
                 sys.exit(0)
             else:
                 top.destroy()
         tk.Button(top, text=t("save"), command=save_preferences, font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(pady=10)
+
+    def set_app_password(self):
+        # Si un mot de passe existe, demander le mot de passe actuel
+        if os.path.exists(PASSWORD_FILE):
+            current = simpledialog.askstring("Mot de passe actuel", "Entrez le mot de passe actuel :", show="*")
+            if not current or hash_password(current) != open(PASSWORD_FILE, "r", encoding="utf-8").read().strip():
+                messagebox.showerror("Erreur", "Mot de passe actuel incorrect.")
+                return
+        pwd1 = simpledialog.askstring("Définir le mot de passe", "Entrez le nouveau mot de passe (laisser vide pour supprimer) :", show="*")
+        if pwd1 is None:
+            return
+        if pwd1 == "":
+            # Supprimer le mot de passe
+            if os.path.exists(PASSWORD_FILE):
+                os.remove(PASSWORD_FILE)
+            messagebox.showinfo("Info", "Mot de passe supprimé.", parent=self)
+        else:
+            pwd2 = simpledialog.askstring("Définir le mot de passe", "Confirmez le mot de passe :", show="*")
+            if pwd1 != pwd2:
+                messagebox.showerror("Erreur", "Les mots de passe ne correspondent pas.")
+                return
+            try:
+                with open(PASSWORD_FILE, "w", encoding="utf-8") as f:
+                    f.write(hash_password(pwd1))
+            except PermissionError:
+                messagebox.showerror("Erreur", "Impossible d'écrire dans le répertoire de configuration.\nVeuillez modifier les permissions de " + CONFIG_DIR)
+                return
+            messagebox.showinfo("Info", "Mot de passe enregistré.", parent=self)
 
     def save_configuration(self):
         dest = filedialog.askdirectory(title=t("choose_backup_directory"))
@@ -1066,7 +1172,7 @@ def update_app(app, repo_url, remote_version):
     temp_dir = tempfile.mkdtemp()
     try:
         subprocess.check_call(["git", "clone", "--depth", "1", repo_url, temp_dir])
-        dest_dir = "/opt/SwiftRDP"
+        dest_dir = PROJECT_DIR
         for item in os.listdir(dest_dir):
             s = os.path.join(dest_dir, item)
             if os.path.isdir(s):
@@ -1083,20 +1189,24 @@ def update_app(app, repo_url, remote_version):
         with open(os.path.join(dest_dir, "version.txt"), "w", encoding="utf-8") as vf:
             vf.write(remote_version)
         os.chmod(os.path.join(dest_dir, "SwiftRDP.sh"), 0o755)
-        # Supprimer le fichier de masquage pour forcer l'affichage du patch note pour la nouvelle version
-        if os.path.exists("/opt/SwiftRDP/CHANGELOGHIDE"):
-            os.remove("/opt/SwiftRDP/CHANGELOGHIDE")
+        if os.path.exists(CHANGELOG_HIDE):
+            os.remove(CHANGELOG_HIDE)
     except Exception as e:
         messagebox.showerror(t("error"), f"{t('update_failed')}\n{e}", parent=app)
         return
     finally:
         shutil.rmtree(temp_dir)
     messagebox.showinfo(t("update_option"), t("update_complete"), parent=app)
-    subprocess.Popen(["/bin/bash", "/opt/SwiftRDP/SwiftRDP.sh"])
+    subprocess.Popen(["/bin/bash", os.path.join(PROJECT_DIR, "SwiftRDP.sh")])
     app.destroy()
     sys.exit(0)
 
 if __name__ == "__main__":
+    root_temp = tk.Tk()
+    root_temp.withdraw()
+    if not check_password():
+        sys.exit(1)
+    root_temp.destroy()
     root = RDPApp()
     root.mainloop()
 EOF
