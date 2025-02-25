@@ -1,6 +1,7 @@
-- addition of the English language
-- Added the Preference sub menu in options
-- Passage sous github = updates
-- AJout of the choice of the theme in the sub menu preference
-- Block duplicates for the name field
-- Added a warning in case of IP duplicates
+- Changed the path of the configuration files folder (now in /usr/local/share/appdata/.SwiftRDP)
+- Added/modified password for launching the SwiftRDP application
+- Added a menu for creating a shortcut for the application (resizing for example)
+- Added a default application feature for example when trying to launch from a browser an rdp://IP
+- SwiftRDP added the name in the launch of the RDP window
+- Fixed the translation of some buttons
+- Fixed and improved some menu resolutions
