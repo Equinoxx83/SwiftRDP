@@ -80,23 +80,25 @@ from tkinter import ttk, messagebox, simpledialog, filedialog
 import subprocess, os, zipfile, shutil, tempfile, threading, time, webbrowser, sys, hashlib
 from datetime import datetime
 
-# --- Dossiers de configuration et du projet ---
-PROJECT_DIR = "/opt/SwiftRDP"  # Fichiers du projet (inchangés)
+# --- Dossiers ---
+PROJECT_DIR = "/opt/SwiftRDP"  # Fichiers du projet (CHANGELOG, icon.png, SwiftRDP.desktop, SwiftRDP.sh, version.txt)
 CONFIG_DIR  = "/usr/local/share/appdata/.SwiftRDP"  # Fichiers de configuration
 
-# Créer CONFIG_DIR s'il n'existe pas et ajuster les permissions
+# Créer CONFIG_DIR s'il n'existe pas et ajuster ses permissions
 if not os.path.exists(CONFIG_DIR):
     os.makedirs(CONFIG_DIR, exist_ok=True)
     subprocess.call(["sudo", "chown", "-R", f"{os.environ.get('USER')}:{os.environ.get('USER')}", CONFIG_DIR])
 
-# --- Définition des chemins ---
+# --- Chemins de configuration ---
 LANGUAGE_FILE    = os.path.join(CONFIG_DIR, "language.conf")
 THEME_FILE       = os.path.join(CONFIG_DIR, "theme.conf")
 FILE_CONNS       = os.path.join(CONFIG_DIR, "connexions.txt")
 GROUPS_FILE      = os.path.join(CONFIG_DIR, "groups.txt")
 PASSWORD_FILE    = os.path.join(CONFIG_DIR, "password.conf")
 SHORTCUTS_FILE   = os.path.join(CONFIG_DIR, "shortcuts.conf")
+DISPLAY_MODE_FILE= os.path.join(CONFIG_DIR, "display_mode.conf")  # "fenetres" ou "onglets"
 
+# Les autres fichiers restent dans PROJECT_DIR
 CHANGELOG_FILE   = os.path.join(PROJECT_DIR, "CHANGELOG")
 CHANGELOG_HIDE   = os.path.join(PROJECT_DIR, "CHANGELOGHIDE")
 VERSION_FILE     = os.path.join(PROJECT_DIR, "version.txt")
@@ -120,7 +122,7 @@ def check_password():
             return False
     return True
 
-# --- Chargement ou initialisation de la configuration de langue et thème ---
+# --- Chargement ou initialisation de la configuration (langue, thème) ---
 if os.path.exists(LANGUAGE_FILE):
     with open(LANGUAGE_FILE, "r", encoding="utf-8") as f:
          CURRENT_LANG = f.read().strip()
@@ -131,6 +133,13 @@ if os.path.exists(THEME_FILE):
          CURRENT_THEME = f.read().strip()
 else:
     CURRENT_THEME = "dark"
+
+# --- Chargement du mode d'affichage (fenêtres séparées par défaut) ---
+if os.path.exists(DISPLAY_MODE_FILE):
+    with open(DISPLAY_MODE_FILE, "r", encoding="utf-8") as f:
+         CONN_DISPLAY_MODE = f.read().strip()
+else:
+    CONN_DISPLAY_MODE = "fenetres"  # ou "onglets"
 
 def get_theme():
     if CURRENT_THEME == "light":
@@ -230,9 +239,11 @@ translations = {
          "dark": "Sombre",
          "light": "Clair",
          "shortcuts": "Raccourcis",
-         "resize_shortcut": "Redimensionner (plein hauteur, moitié largeur)",
          "switch_shortcut": "Switcher entre connexions",
          "set_password": "Définir/modifier mot de passe SwiftRDP",
+         "display_mode": "Mode d'affichage des connexions",
+         "fenetres": "Fenêtres séparées",
+         "onglets": "Onglets",
          "save": "Enregistrer"
     },
     "en": {
@@ -309,9 +320,11 @@ translations = {
          "dark": "Dark",
          "light": "Light",
          "shortcuts": "Shortcuts",
-         "resize_shortcut": "Resize (full height, half width)",
          "switch_shortcut": "Switch between connections",
          "set_password": "Set/Change SwiftRDP Password",
+         "display_mode": "Connection display mode",
+         "fenetres": "Separate windows",
+         "onglets": "Tabs",
          "save": "Save"
     }
 }
@@ -462,18 +475,25 @@ def read_patch_note():
             return content if content else t("patch_note_empty")
     return t("patch_note_empty")
 
-# --- Fonctions pour les raccourcis ---
-def resize_rdp_window(root):
-    screen_width = root.winfo_screenwidth()
-    screen_height = root.winfo_screenheight()
-    new_width = screen_width // 2
-    new_height = screen_height
-    # On utilise "SwiftRDP:" comme partie commune du titre
-    subprocess.call(["wmctrl", "-r", "SwiftRDP:", "-e", f"0,0,0,{new_width},{new_height}"])
+# --- Fonctions pour les raccourcis --- 
+# Supprime le raccourci de redimensionnement et ajoute des raccourcis Ctrl+1 à Ctrl+9 pour switcher vers la nième fenêtre SwiftRDP:
+def switch_to_window(n):
+    try:
+        output = subprocess.check_output(["wmctrl", "-l"], text=True)
+    except Exception:
+        return
+    windows = []
+    for line in output.splitlines():
+        if line.lower().find("swiftrdp:") != -1:
+            # Extraire l'ID de la fenêtre (premier champ)
+            parts = line.split()
+            if parts:
+                windows.append(parts[0])
+    windows.sort()  # Simple tri, à affiner si nécessaire
+    if 0 <= n-1 < len(windows):
+        subprocess.call(["wmctrl", "-i", "-a", windows[n-1]])
 
-def switch_rdp_window(root):
-    subprocess.call(["wmctrl", "-a", "SwiftRDP:"])
-
+# --- Classe principale de l'application ---
 class RDPApp(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -488,10 +508,10 @@ class RDPApp(tk.Tk):
         self.create_widgets()
         self.refresh_table()
         threading.Thread(target=check_for_update, args=(self, ), daemon=True).start()
-        self.check_and_show_patch_note()  # Affichage automatique du patch note avec case à cocher
-        # Rebind des raccourcis en passant la fenêtre courante
-        self.bind_all("<Control-Alt-r>", lambda event: resize_rdp_window(self))
-        self.bind_all("<Control-Alt-s>", lambda event: switch_rdp_window(self))
+        self.check_and_show_patch_note()  # Affichage automatique du patch note (avec case à cocher)
+        # Bind des raccourcis pour switcher entre fenêtres via Ctrl+1 ... Ctrl+9
+        for i in range(1, 10):
+            self.bind_all(f"<Control-Key-{i}>", lambda event, n=i: switch_to_window(n))
 
     def check_and_show_patch_note(self):
         content = read_patch_note()
@@ -965,32 +985,35 @@ class RDPApp(tk.Tk):
           command=lambda: self.show_patch_note_dialog(read_patch_note(), show_checkbox=False),
           font=self.font_main, bg=self.theme["button_bg"], fg=self.theme["button_fg"],
           relief="flat", width=30).pack(pady=5)
-        tk.Button(btn_frame, text=t("shortcuts"), command=self.shortcuts_menu, font=self.font_main,
+        # Nouveau bouton pour choisir le mode d'affichage des connexions
+        tk.Button(btn_frame, text=t("display_mode"), command=self.display_mode_menu, font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
         tk.Button(btn_frame, text=t("preferences"), command=self.preferences_menu, font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
 
-    def shortcuts_menu(self):
+    def display_mode_menu(self):
         top = tk.Toplevel(self)
         top.iconphoto(False, self.logo)
-        top.title(t("shortcuts"))
+        top.title(t("display_mode"))
         top.geometry("400x220")
         top.configure(bg=self.theme["bg"])
-        tk.Label(top, text=t("resize_shortcut"), font=self.font_main, bg=self.theme["bg"], fg=self.theme["fg"]).pack(anchor="w", padx=10, pady=5)
-        resize_var = tk.StringVar(value="Ctrl+Alt+R")
-        tk.Entry(top, textvariable=resize_var, font=self.font_main, bg=self.theme["entry_bg"], fg=self.theme["fg"]).pack(fill=tk.X, padx=10)
-        tk.Label(top, text=t("switch_shortcut"), font=self.font_main, bg=self.theme["bg"], fg=self.theme["fg"]).pack(anchor="w", padx=10, pady=5)
-        switch_var = tk.StringVar(value="Ctrl+Alt+S")
-        tk.Entry(top, textvariable=switch_var, font=self.font_main, bg=self.theme["entry_bg"], fg=self.theme["fg"]).pack(fill=tk.X, padx=10)
-        def save_shortcuts():
-            self.unbind_all("<Control-Alt-r>")
-            self.unbind_all("<Control-Alt-s>")
-            self.bind_all("<Control-Alt-r>", lambda event: resize_rdp_window(self))
-            self.bind_all("<Control-Alt-s>", lambda event: switch_rdp_window(self))
-            messagebox.showinfo(t("info"), "Raccourcis enregistrés.", parent=top)
+        mode_var = tk.StringVar(value=CONN_DISPLAY_MODE)
+        tk.Radiobutton(top, text=t("fenetres"), variable=mode_var, value="fenetres",
+                       bg=self.theme["bg"], fg=self.theme["fg"], font=self.font_main).pack(anchor="w", padx=20, pady=10)
+        tk.Radiobutton(top, text=t("onglets"), variable=mode_var, value="onglets",
+                       bg=self.theme["bg"], fg=self.theme["fg"], font=self.font_main).pack(anchor="w", padx=20, pady=10)
+        def save_mode():
+            global CONN_DISPLAY_MODE
+            CONN_DISPLAY_MODE = mode_var.get()
+            with open(DISPLAY_MODE_FILE, "w", encoding="utf-8") as f:
+                f.write(CONN_DISPLAY_MODE)
+            if CONN_DISPLAY_MODE == "onglets":
+                messagebox.showinfo(t("info"), "Option 'Onglets' non supportée pour l'instant.\nLes connexions s'ouvriront dans des fenêtres séparées.", parent=top)
+            else:
+                messagebox.showinfo(t("info"), "Mode d'affichage enregistré.", parent=top)
             top.destroy()
-        tk.Button(top, text=t("save"), command=save_shortcuts, font=self.font_main,
-                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(pady=10)
+        tk.Button(top, text=t("save"), command=save_mode, font=self.font_main,
+                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(pady=20)
 
     def preferences_menu(self):
         if window_exists(self, t("preferences")):
