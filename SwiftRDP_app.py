@@ -8,7 +8,7 @@ from functools import partial
 ######################################
 # Dossiers et chemins
 ######################################
-PROJECT_DIR = "/opt/SwiftRDP"  # Fichiers du projet (CHANGELOG, icon.png, SwiftRDP.desktop, SwiftRDP.sh, version.txt)
+PROJECT_DIR = "/opt/SwiftRDP"  # Fichiers du projet : CHANGELOG, icon.png, SwiftRDP.desktop, SwiftRDP.sh, version.txt
 CONFIG_DIR  = "/usr/local/share/appdata/.SwiftRDP"  # Fichiers de configuration
 
 # Créer CONFIG_DIR s'il n'existe pas et ajuster ses permissions
@@ -31,6 +31,8 @@ CHANGELOG_FILE    = os.path.join(PROJECT_DIR, "CHANGELOG")
 CHANGELOG_HIDE    = os.path.join(PROJECT_DIR, "CHANGELOGHIDE")
 VERSION_FILE      = os.path.join(PROJECT_DIR, "version.txt")
 ICON_FILE         = os.path.join(PROJECT_DIR, "icon.png")
+# Fichier de flag pour patch note à afficher après update
+PATCH_NOTE_FLAG   = os.path.join(PROJECT_DIR, "PATCH_NOTE_PENDING")
 
 ######################################
 # Fonctions utilitaires
@@ -38,7 +40,7 @@ ICON_FILE         = os.path.join(PROJECT_DIR, "icon.png")
 def hash_password(password):
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
-# Vérification du mot de passe (sera appelée avant de dévoiler l'interface)
+# Demande de mot de passe avant d'afficher l'interface
 def check_password(parent):
     if os.path.exists(PASSWORD_FILE):
         with open(PASSWORD_FILE, "r", encoding="utf-8") as f:
@@ -50,7 +52,7 @@ def check_password(parent):
     return True
 
 ######################################
-# Mécanisme Singleton (empêche plusieurs instances)
+# Singleton (empêche plusieurs instances)
 ######################################
 SINGLETON_PORT = 50000
 
@@ -529,11 +531,15 @@ def update_app(app, repo_url, remote_version):
         os.chmod(os.path.join(dest_dir, "SwiftRDP.sh"), 0o755)
         if os.path.exists(CHANGELOG_HIDE):
             os.remove(CHANGELOG_HIDE)
+        # Placer le flag pour afficher le patch note après redémarrage
+        with open(os.path.join(PROJECT_DIR, "PATCH_NOTE_PENDING"), "w", encoding="utf-8") as f:
+            f.write("1")
     except Exception as e:
         messagebox.showerror(t("error"), f"{t('update_failed')}\n{e}", parent=app)
         return
     finally:
         shutil.rmtree(temp_dir)
+    # Affichage d'une barre de progression pendant 10 secondes avant redémarrage
     def progress_and_restart():
         progress_win = tk.Toplevel(app)
         progress_win.title(t("update_complete"))
@@ -569,10 +575,13 @@ class RDPApp(tk.Tk):
         self.font_heading = ("Segoe Script", 12)
         self.create_widgets()
         self.refresh_table()
-        # Les vérifications d'update et de patch note ne seront lancées qu'après saisie du mot de passe
         # Bind pour Ctrl+1 à Ctrl+9
         for i in range(1, 10):
             self.bind_all(f"<Control-Key-{i}>", lambda event, n=i: switch_to_window(n))
+        # Si le flag de patch note existe, l'afficher automatiquement et le supprimer
+        if os.path.exists(PATCH_NOTE_FLAG):
+            self.after(500, lambda: self.show_patch_note_dialog(read_patch_note()))
+            os.remove(PATCH_NOTE_FLAG)
     
     def prompt_rdp_connection(self, ip):
         login = simpledialog.askstring("Login", "Entrez votre login :", parent=self)
@@ -607,7 +616,6 @@ class RDPApp(tk.Tk):
             self.connection_in_progress = False
             return
         self.update_idletasks()
-        # Création d'une fenêtre de chargement avec barre de progression
         main_x = self.winfo_x()
         main_y = self.winfo_y()
         main_width = self.winfo_width()
@@ -638,12 +646,10 @@ class RDPApp(tk.Tk):
                 progress_win.destroy()
         update_progress()
         def check_window():
-            nonlocal start_time
             timeout = 10
             interval = 0.5
-            elapsed = 0
             found = False
-            while elapsed < timeout:
+            while time.time() - start_time < timeout:
                 try:
                     output = subprocess.check_output(["wmctrl", "-l"], text=True)
                 except Exception:
@@ -652,7 +658,6 @@ class RDPApp(tk.Tk):
                     found = True
                     break
                 time.sleep(interval)
-                elapsed = time.time() - start_time
             # Forcer un temps minimum de 2 secondes d'affichage
             if time.time() - start_time < 2:
                 time.sleep(2 - (time.time() - start_time))
@@ -670,43 +675,6 @@ class RDPApp(tk.Tk):
                 self.after(0, lambda: messagebox.showerror(t("error"), t("connection_failed"), parent=self))
             self.connection_in_progress = False
         threading.Thread(target=check_window, daemon=True).start()
-    
-    def check_and_show_patch_note(self):
-        content = read_patch_note()
-        if not content or content == t("patch_note_empty"):
-            return
-        if os.path.exists(CHANGELOG_HIDE):
-            with open(CHANGELOG_HIDE, "r", encoding="utf-8") as f:
-                hidden_version = f.read().strip()
-            if hidden_version == get_version():
-                return
-        self.show_patch_note_dialog(content)
-    
-    def show_patch_note_dialog(self, content, show_checkbox=True):
-        dialog = tk.Toplevel(self)
-        dialog.lift()
-        dialog.attributes("-topmost", True)
-        dialog.iconphoto(False, self.logo)
-        dialog.title(t("patch_note"))
-        dialog.geometry("800x600")
-        dialog.configure(bg=self.theme["bg"])
-        text = tk.Text(dialog, wrap=tk.WORD, font=self.font_main,
-                       bg=self.theme["entry_bg"], fg=self.theme["fg"])
-        text.insert(tk.END, content)
-        text.config(state="disabled")
-        text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        var_hide = tk.BooleanVar()
-        if show_checkbox:
-            check = tk.Checkbutton(dialog, text=t("dont_show_again"), variable=var_hide,
-                                   bg=self.theme["bg"], fg=self.theme["fg"], font=("Segoe Script", 14))
-            check.pack(anchor="w", padx=10, pady=5)
-        def close_dialog():
-            if show_checkbox and var_hide.get():
-                with open(os.path.join(PROJECT_DIR, "CHANGELOGHIDE"), "w", encoding="utf-8") as f:
-                    f.write(get_version())
-            dialog.destroy()
-        tk.Button(dialog, text=t("return"), command=close_dialog, font=self.font_main,
-                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(pady=10)
     
     def add_group(self, parent, combobox, var):
         new_grp = simpledialog.askstring(t("new_group"), t("enter_new_group"), parent=parent)
@@ -1285,7 +1253,7 @@ class RDPApp(tk.Tk):
         self.refresh_table()
 
 if __name__ == "__main__":
-    # Singleton : vérifier si une instance existe déjà
+    # Singleton : vérifie si une instance existe déjà
     singleton = check_singleton()
     if singleton is None:
         if len(sys.argv) > 1 and sys.argv[1].startswith("rdp://"):
@@ -1301,13 +1269,13 @@ if __name__ == "__main__":
         ip = sys.argv[1][len("rdp://"):]
         app.after(100, lambda: app.prompt_rdp_connection(ip))
     
-    # Masquer la fenêtre principale jusqu'à la saisie du mot de passe
+    # Masquer la fenêtre principale jusqu'à saisie du mot de passe
     app.withdraw()
     if not check_password(app):
         sys.exit(1)
     app.deiconify()
-    # Après dévissage, lancer les vérifications d'update et du patch note
+    
+    # Lancer la vérification d'update (le patch note ne s'affichera automatiquement qu'après une mise à jour via le flag)
     app.after(500, lambda: check_for_update(app))
-    app.after(500, lambda: app.check_and_show_patch_note())
     
     app.mainloop()
