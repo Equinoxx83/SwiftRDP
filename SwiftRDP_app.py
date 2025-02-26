@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
-import subprocess, os, zipfile, shutil, tempfile, threading, time, webbrowser, sys, hashlib
+import subprocess, os, zipfile, shutil, tempfile, threading, time, webbrowser, sys, hashlib, socket
 from datetime import datetime
+from functools import partial
 
-# --- Dossiers et chemins ---
-PROJECT_DIR = "/opt/SwiftRDP"  # Fichiers du projet : CHANGELOG, icon.png, SwiftRDP.desktop, SwiftRDP.sh, version.txt
+##############################
+# Dossiers et chemins
+##############################
+PROJECT_DIR = "/opt/SwiftRDP"  # Fichiers du projet (CHANGELOG, icon.png, SwiftRDP.desktop, SwiftRDP.sh, version.txt)
 CONFIG_DIR  = "/usr/local/share/appdata/.SwiftRDP"  # Fichiers de configuration
 
 # Créer CONFIG_DIR s'il n'existe pas et ajuster ses permissions
@@ -13,7 +16,7 @@ if not os.path.exists(CONFIG_DIR):
     os.makedirs(CONFIG_DIR, exist_ok=True)
     subprocess.call(["sudo", "chown", "-R", f"{os.environ.get('USER')}:{os.environ.get('USER')}", CONFIG_DIR])
 
-# --- Chemins de configuration ---
+# Fichiers de configuration (dans CONFIG_DIR)
 LANGUAGE_FILE     = os.path.join(CONFIG_DIR, "language.conf")
 THEME_FILE        = os.path.join(CONFIG_DIR, "theme.conf")
 FILE_CONNS        = os.path.join(CONFIG_DIR, "connexions.txt")
@@ -23,18 +26,19 @@ SHORTCUTS_FILE    = os.path.join(CONFIG_DIR, "shortcuts.conf")
 DISPLAY_MODE_FILE = os.path.join(CONFIG_DIR, "display_mode.conf")
 DEFAULT_RDP_FILE  = os.path.join(CONFIG_DIR, "default_rdp.conf")  # Contiendra "yes" ou "no"
 
-# --- Fichiers du projet (inchangés) ---
+# Fichiers du projet (dans PROJECT_DIR)
 CHANGELOG_FILE    = os.path.join(PROJECT_DIR, "CHANGELOG")
 CHANGELOG_HIDE    = os.path.join(PROJECT_DIR, "CHANGELOGHIDE")
 VERSION_FILE      = os.path.join(PROJECT_DIR, "version.txt")
 ICON_FILE         = os.path.join(PROJECT_DIR, "icon.png")
 
-# --- Fonctions de hachage pour le mot de passe ---
+##############################
+# Fonctions utilitaires
+##############################
 def hash_password(password):
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
-# --- Protection par mot de passe au lancement ---
-# Pour le prompt, on utilisera le parent "app" (défini dans la classe)
+# Fonction de vérification du mot de passe (utilise le parent de l'app)
 def check_password(parent):
     if os.path.exists(PASSWORD_FILE):
         with open(PASSWORD_FILE, "r", encoding="utf-8") as f:
@@ -45,7 +49,43 @@ def check_password(parent):
             return False
     return True
 
-# --- Vérifier la préférence RDP par défaut au démarrage ---
+##############################
+# Mécanisme Singleton
+##############################
+SINGLETON_PORT = 50000
+def check_singleton():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", SINGLETON_PORT))
+        s.listen(1)
+        return s
+    except OSError:
+        return None
+
+def singleton_listener(sock, app):
+    while True:
+        try:
+            conn, addr = sock.accept()
+            data = conn.recv(1024).decode()
+            if data.startswith("rdp://"):
+                ip = data[len("rdp://"):]
+                app.after(100, lambda: app.prompt_rdp_connection(ip))
+            conn.close()
+        except Exception:
+            break
+
+def send_to_instance(message):
+    try:
+        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client.connect(("127.0.0.1", SINGLETON_PORT))
+        client.sendall(message.encode())
+        client.close()
+    except Exception:
+        pass
+
+##############################
+# Configuration RDP par défaut
+##############################
 if not os.path.exists(DEFAULT_RDP_FILE) or not open(DEFAULT_RDP_FILE, "r", encoding="utf-8").read().strip():
     if messagebox.askyesno("Application par défaut", "Voulez-vous définir SwiftRDP comme application par défaut pour les liens rdp:// ?"):
         with open(DEFAULT_RDP_FILE, "w", encoding="utf-8") as f:
@@ -59,7 +99,9 @@ else:
     if DEFAULT_RDP:
         subprocess.call(["xdg-mime", "default", "SwiftRDP.desktop", "x-scheme-handler/rdp"])
 
-# --- Chargement ou initialisation de la configuration (langue, thème, mode d'affichage) ---
+##############################
+# Chargement de la configuration (langue, thème, mode d'affichage)
+##############################
 if os.path.exists(LANGUAGE_FILE):
     with open(LANGUAGE_FILE, "r", encoding="utf-8") as f:
          CURRENT_LANG = f.read().strip()
@@ -98,7 +140,9 @@ def get_theme():
              "tree_fg": "#c0c0c0"
          }
 
-# --- Traductions ---
+##############################
+# Traductions
+##############################
 translations = {
     "fr": {
          "title": "SwiftRDP",
@@ -270,10 +314,11 @@ def t(key, **kwargs):
     text = translations.get(CURRENT_LANG, translations["fr"]).get(key, key)
     return text.format(**kwargs)
 
-# --- Les fichiers de configuration sont dans CONFIG_DIR, les autres dans PROJECT_DIR ---
+##############################
+# Fichiers de configuration et projet
+##############################
 PROJECT_DIR = "/opt/SwiftRDP"
 ICON_FILE = os.path.join(PROJECT_DIR, "icon.png")
-
 # S'assurer que FILE_CONNS et GROUPS_FILE existent
 for file in (FILE_CONNS, GROUPS_FILE):
     if not os.path.exists(file):
@@ -386,7 +431,7 @@ def treeview_sort_column(tv, col, reverse):
     data.sort(key=lambda t: t[0].lower(), reverse=reverse)
     for index, (val, k) in enumerate(data):
         tv.move(k, '', index)
-    tv.heading(col, command=lambda: treeview_sort_column(tv, col, not reverse))
+    tv.heading(col, command=partial(treeview_sort_column, tv, col, not reverse))
 
 def window_exists(root, title):
     for win in root.winfo_children():
@@ -395,7 +440,9 @@ def window_exists(root, title):
             return True
     return False
 
-# --- Fonctions pour le patch note ---
+##############################
+# Fonctions pour le patch note
+##############################
 def get_version():
     try:
         with open(VERSION_FILE, "r", encoding="utf-8") as f:
@@ -410,7 +457,9 @@ def read_patch_note():
             return content if content else t("patch_note_empty")
     return t("patch_note_empty")
 
-# --- Fonction pour switcher entre fenêtres (Ctrl+1 à Ctrl+9) ---
+##############################
+# Fonction pour switcher entre fenêtres (Ctrl+1 à Ctrl+9)
+##############################
 def switch_to_window(n):
     try:
         output = subprocess.check_output(["wmctrl", "-l"], text=True)
@@ -426,7 +475,9 @@ def switch_to_window(n):
     if 0 <= n-1 < len(windows):
         subprocess.call(["wmctrl", "-i", "-a", windows[n-1]])
 
-# --- Fonction pour la mise à jour (affichage d'une barre de progression avant redémarrage) ---
+##############################
+# Fonctions pour la mise à jour (barre de progression avant redémarrage)
+##############################
 def check_for_update(app, from_menu=False):
     repo_url = "https://github.com/Equinoxx83/SwiftRDP.git"
     temp_dir = tempfile.mkdtemp()
@@ -482,7 +533,6 @@ def update_app(app, repo_url, remote_version):
         return
     finally:
         shutil.rmtree(temp_dir)
-    # Affichage d'une barre de progression pendant 10 secondes avant redémarrage
     def progress_and_restart():
         progress_win = tk.Toplevel(app)
         progress_win.title(t("update_complete"))
@@ -501,11 +551,13 @@ def update_app(app, repo_url, remote_version):
         sys.exit(0)
     threading.Thread(target=progress_and_restart, daemon=True).start()
 
-# --- Classe principale de l'application ---
+##############################
+# Classe principale de l'application
+##############################
 class RDPApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.connection_in_progress = False  # Flag pour éviter les demandes multiples
+        self.connection_in_progress = False  # Pour éviter plusieurs demandes simultanées
         self.theme = get_theme()
         self.logo = tk.PhotoImage(file=ICON_FILE)
         self.iconphoto(False, self.logo)
@@ -517,22 +569,21 @@ class RDPApp(tk.Tk):
         self.create_widgets()
         self.refresh_table()
         threading.Thread(target=check_for_update, args=(self, ), daemon=True).start()
-        self.check_and_show_patch_note()  # Affichage automatique du patch note (avec case à cocher)
-        # Bind des raccourcis Ctrl+1 à Ctrl+9 pour switcher entre fenêtres
+        self.check_and_show_patch_note()  # Affichage automatique du patch note
+        # Bind pour Ctrl+1 à Ctrl+9
         for i in range(1, 10):
             self.bind_all(f"<Control-Key-{i}>", lambda event, n=i: switch_to_window(n))
-
+    
     def prompt_rdp_connection(self, ip):
-        # Méthode appelée quand un lien rdp:// est passé en argument
+        # Si un lien rdp:// est passé, on demande login et mot de passe
         login = simpledialog.askstring("Login", "Entrez votre login :", parent=self)
         pwd = simpledialog.askstring("Mot de passe", "Entrez votre mot de passe :", show="*", parent=self)
         if login and pwd:
-            # Créer une "ligne" de connexion temporaire : [nom, ip, login, last_connection, note, groupe]
             row = [ip, ip, login, "N/A", "", ""]
             self.connect_connection(row, pwd_provided=pwd)
         else:
             messagebox.showerror("Erreur", "Login ou mot de passe non fourni.", parent=self)
-
+    
     def connect_connection(self, row, pwd_provided=None):
         if self.connection_in_progress:
             return
@@ -620,7 +671,7 @@ class RDPApp(tk.Tk):
                 self.after(0, lambda: messagebox.showerror(t("error"), t("connection_failed"), parent=self))
             self.connection_in_progress = False
         threading.Thread(target=check_window, daemon=True).start()
-
+    
     def check_and_show_patch_note(self):
         content = read_patch_note()
         if not content or content == t("patch_note_empty"):
@@ -631,7 +682,7 @@ class RDPApp(tk.Tk):
             if hidden_version == get_version():
                 return
         self.show_patch_note_dialog(content)
-
+    
     def show_patch_note_dialog(self, content, show_checkbox=True):
         dialog = tk.Toplevel(self)
         dialog.lift()
@@ -657,7 +708,7 @@ class RDPApp(tk.Tk):
             dialog.destroy()
         tk.Button(dialog, text=t("return"), command=close_dialog, font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(pady=10)
-
+    
     def add_group(self, parent, combobox, var):
         new_grp = simpledialog.askstring(t("new_group"), t("enter_new_group"), parent=parent)
         if new_grp:
@@ -668,7 +719,7 @@ class RDPApp(tk.Tk):
                     gf.write(new_grp + "\n")
             combobox["values"] = groups
             var.set(new_grp)
-
+    
     def create_widgets(self):
         self.theme = get_theme()
         search_frame = tk.Frame(self, bg=self.theme["bg"])
@@ -688,7 +739,7 @@ class RDPApp(tk.Tk):
                         foreground=self.theme["fg"], relief="ridge", borderwidth=1)
         self.tree = ttk.Treeview(self, columns=columns, show="headings", selectmode="browse")
         for col, width in zip(columns, (300,150,150,200,300,150)):
-            self.tree.heading(col, text=col, command=lambda _col=col: treeview_sort_column(self.tree, _col, False))
+            self.tree.heading(col, text=col, command=partial(treeview_sort_column, self.tree, col, False))
             self.tree.column(col, width=width, anchor="w")
         self.tree.pack(fill=tk.BOTH, expand=True, padx=15, pady=10)
         self.tree.bind("<Double-1>", self.on_double_click)
@@ -701,7 +752,7 @@ class RDPApp(tk.Tk):
                       bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat").grid(row=0, column=i, padx=10, sticky="ew")
         for i in range(len(btn_texts)):
             btn_frame.grid_columnconfigure(i, weight=1)
-
+    
     def on_double_click(self, event):
         col = self.tree.identify_column(event.x)
         if col == "#5":
@@ -713,7 +764,7 @@ class RDPApp(tk.Tk):
             row = self.get_selected_row()
             if row:
                 self.connect_connection(row)
-
+    
     def refresh_table(self):
         for i in self.tree.get_children():
             self.tree.delete(i)
@@ -726,8 +777,8 @@ class RDPApp(tk.Tk):
             display_row[4] = format_note(row[4])
             self.tree.insert("", tk.END, values=display_row)
         for col in self.tree["columns"]:
-            self.tree.heading(col, command=lambda _col=col: treeview_sort_column(self.tree, _col, False))
-
+            self.tree.heading(col, command=partial(treeview_sort_column, self.tree, col, False))
+    
     def get_selected_row(self):
         sel = self.tree.selection()
         if not sel:
@@ -739,31 +790,31 @@ class RDPApp(tk.Tk):
             if row[0] == selected[0] and row[5] == selected[5]:
                 return row
         return selected
-
+    
     def action_connect(self):
         row = self.get_selected_row()
         if row:
             self.connect_connection(row)
-
+    
     def action_add(self):
         if window_exists(self, t("add_connection_title")):
             return
         self.add_connection()
-
+    
     def action_modify(self):
         row = self.get_selected_row()
         if row:
             if window_exists(self, t("modify_connection_title")):
                 return
             self.modify_connection(row)
-
+    
     def action_delete(self):
         row = self.get_selected_row()
         if row and messagebox.askyesno(t("confirm"), f"{t('delete_connection')} {row[0]} ?", parent=self):
             delete_connection((row[0], row[5]))
             messagebox.showinfo(t("info"), t("connection_deleted"), parent=self)
             self.refresh_table()
-
+    
     def action_view_note(self):
         row = self.get_selected_row()
         if row:
@@ -785,9 +836,8 @@ class RDPApp(tk.Tk):
             text.pack(padx=20, pady=10, fill=tk.BOTH, expand=True)
             tk.Button(top, text=t("return"), command=top.destroy, font=("Segoe Script", 12),
                       bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(pady=10)
-
+    
     def prompt_rdp_connection(self, ip):
-        # Méthode appelée quand un lien rdp:// est passé en argument
         login = simpledialog.askstring("Login", "Entrez votre login :", parent=self)
         pwd = simpledialog.askstring("Mot de passe", "Entrez votre mot de passe :", show="*", parent=self)
         if login and pwd:
@@ -795,95 +845,7 @@ class RDPApp(tk.Tk):
             self.connect_connection(row, pwd_provided=pwd)
         else:
             messagebox.showerror("Erreur", "Login ou mot de passe non fourni.", parent=self)
-
-    def connect_connection(self, row, pwd_provided=None):
-        if self.connection_in_progress:
-            return
-        self.connection_in_progress = True
-        if pwd_provided is None:
-            pwd = simpledialog.askstring(t("password"), f"{t('enter_password_for')} {row[0]}:", show="*", parent=self)
-        else:
-            pwd = pwd_provided
-        if not pwd:
-            messagebox.showerror(t("error"), t("no_password"), parent=self)
-            self.connection_in_progress = False
-            return
-        try:
-            subprocess.Popen(
-                ["xfreerdp", f"/v:{row[1]}", f"/u:{row[2]}", f"/p:{pwd}",
-                 "/dynamic-resolution", "/cert-ignore", f"/title:SwiftRDP: {row[1]}"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, start_new_session=True)
-        except Exception as e:
-            messagebox.showerror(t("error"), f"{t('launch_error')}:\n{e}", parent=self)
-            self.connection_in_progress = False
-            return
-        self.update_idletasks()
-        main_x = self.winfo_x()
-        main_y = self.winfo_y()
-        main_width = self.winfo_width()
-        main_height = self.winfo_height()
-        win_width = 400
-        win_height = 150
-        pos_x = main_x + (main_width - win_width) // 2
-        pos_y = main_y + (main_height - win_height) // 2
-        progress_win = tk.Toplevel(self)
-        progress_win.iconphoto(False, self.logo)
-        progress_win.title(t("connecting"))
-        progress_win.geometry(f"{win_width}x{win_height}+{pos_x}+{pos_y}")
-        progress_win.configure(bg=self.theme["bg"])
-        progress_win.update_idletasks()
-        tk.Label(progress_win, text=t("please_wait"),
-                 font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["fg"]).pack(pady=20)
-        style = ttk.Style(progress_win)
-        style.theme_use("clam")
-        style.configure("grey.Horizontal.TProgressbar", foreground="grey", background="grey")
-        pb = ttk.Progressbar(progress_win, mode="determinate", maximum=100,
-                             style="grey.Horizontal.TProgressbar")
-        pb.pack(fill=tk.X, padx=20, pady=10)
-        progress_done = False
-        def update_progress(count=0):
-            nonlocal progress_done
-            if progress_done:
-                return
-            if count <= 100:
-                pb['value'] = count
-                self.after(100, update_progress, count+1)
-            else:
-                progress_win.destroy()
-        update_progress()
-        def check_window():
-            nonlocal progress_done
-            timeout = 10
-            interval = 0.5
-            elapsed = 0
-            found = False
-            while elapsed < timeout:
-                try:
-                    output = subprocess.check_output(["wmctrl", "-l"], text=True)
-                except Exception:
-                    output = ""
-                if "swiftrdp:" in output.lower():
-                    found = True
-                    break
-                time.sleep(interval)
-                elapsed += interval
-            progress_done = True
-            try:
-                progress_win.destroy()
-            except:
-                pass
-            if found:
-                new_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                new_row = row.copy()
-                new_row[3] = new_date
-                update_connection_by_value(row, new_row)
-                self.after(0, self.refresh_table)
-            else:
-                self.after(0, lambda: messagebox.showerror(t("error"), t("connection_failed"), parent=self))
-            self.connection_in_progress = False
-        threading.Thread(target=check_window, daemon=True).start()
-
+    
     def add_connection(self):
         if window_exists(self, t("add_connection_title")):
             return
@@ -927,7 +889,7 @@ class RDPApp(tk.Tk):
                   font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=15, expand=True)
         tk.Button(btn_frame_top, text=t("return"), command=top.destroy,
                   font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=15, expand=True)
-
+    
     def open_note_window(self, parent):
         if window_exists(self, t("add_note_title")):
             return
@@ -949,7 +911,7 @@ class RDPApp(tk.Tk):
                   font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=20, expand=True)
         tk.Button(btn_frame, text=t("return"), command=top.destroy,
                   font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=20, expand=True)
-
+    
     def save_new_connection(self, top, e_name, e_ip, e_login, group_var, note_value):
         name_val = e_name.get().strip()
         ip_val = e_ip.get().strip()
@@ -972,7 +934,7 @@ class RDPApp(tk.Tk):
         messagebox.showinfo(t("info"), t("connection_added"), parent=top)
         top.destroy()
         self.refresh_table()
-
+    
     def modify_connection(self, original_row):
         if window_exists(self, t("modify_connection_title")):
             return
@@ -1018,7 +980,7 @@ class RDPApp(tk.Tk):
                   font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=10, expand=True)
         tk.Button(btn_frame_bottom, text=t("return"), command=top.destroy,
                   font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=10, expand=True)
-
+    
     def save_modification(self, top, e_name, e_ip, e_login, group_var, original_row):
         new_name = e_name.get().strip() or original_row[0]
         new_ip = e_ip.get().strip() or original_row[1]
@@ -1043,7 +1005,7 @@ class RDPApp(tk.Tk):
         messagebox.showinfo(t("info"), t("connection_modified"), parent=top)
         top.destroy()
         self.refresh_table()
-
+    
     def manage_groups(self):
         if window_exists(self, t("manage_groups_title")):
             return
@@ -1086,7 +1048,7 @@ class RDPApp(tk.Tk):
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=10)
         tk.Button(btn_frame, text=t("return"), command=top.destroy, font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=10)
-
+    
     def options_menu(self):
         if window_exists(self, t("options")):
             return
@@ -1113,10 +1075,10 @@ class RDPApp(tk.Tk):
           command=lambda: self.show_patch_note_dialog(read_patch_note(), show_checkbox=False),
           font=self.font_main, bg=self.theme["button_bg"], fg=self.theme["button_fg"],
           relief="flat", width=30).pack(pady=5)
-        # Bouton pour accéder aux Préférences (incluant le bouton par défaut)
+        # Bouton pour accéder aux Préférences (qui inclut le bouton par défaut et le mode d'affichage)
         tk.Button(btn_frame, text=t("preferences"), command=self.preferences_menu, font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
-
+    
     def display_mode_menu(self):
         top = tk.Toplevel(self)
         top.iconphoto(False, self.logo)
@@ -1140,7 +1102,7 @@ class RDPApp(tk.Tk):
             top.destroy()
         tk.Button(top, text=t("save"), command=save_mode, font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(pady=20)
-
+    
     def preferences_menu(self):
         if window_exists(self, t("preferences")):
             return
@@ -1202,7 +1164,7 @@ class RDPApp(tk.Tk):
                 top.destroy()
         tk.Button(top, text=t("save"), command=save_preferences, font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(pady=10)
-
+    
     def set_app_password(self):
         if os.path.exists(PASSWORD_FILE):
             current = simpledialog.askstring("Mot de passe actuel", "Entrez le mot de passe actuel :", show="*", parent=self)
@@ -1228,13 +1190,13 @@ class RDPApp(tk.Tk):
                 messagebox.showerror("Erreur", "Impossible d'écrire dans le répertoire de configuration.\nVeuillez modifier les permissions de " + CONFIG_DIR, parent=self)
                 return
             messagebox.showinfo("Info", "Mot de passe enregistré.", parent=self)
-
+    
     def save_configuration(self):
         dest = filedialog.askdirectory(title=t("choose_backup_directory"))
         if dest:
             zip_path = backup_configuration(dest, export=False)
             messagebox.showinfo(t("info"), t("configuration_saved", path=zip_path), parent=self)
-
+    
     def export_configuration(self):
         self.tk.call('tk', 'scaling', 2.5)
         dest = filedialog.askdirectory(title=t("choose_export_directory"))
@@ -1242,7 +1204,7 @@ class RDPApp(tk.Tk):
         if dest:
             zip_path = backup_configuration(dest, export=True)
             messagebox.showinfo(t("info"), t("configuration_exported", path=zip_path), parent=self)
-
+    
     def import_configuration(self):
         self.tk.call('tk', 'scaling', 2.5)
         zip_file = filedialog.askopenfilename(title=t("select_import_file"),
@@ -1252,12 +1214,12 @@ class RDPApp(tk.Tk):
             import_configuration_func(zip_file)
             messagebox.showinfo(t("info"), t("configuration_imported"), parent=self)
             self.refresh_table()
-
+    
     def delete_configuration(self):
-        conn_deleted = messagebox.askyesno(t("confirm"), "Voulez-vous supprimer toutes les connexions ?", parent=self)
+        conn_deleted = messagebox.askyesno(t("confirm"), t("delete_all_connections"), parent=self)
         if conn_deleted:
             open(FILE_CONNS, "w", encoding="utf-8").close()
-        group_deleted = messagebox.askyesno(t("confirm"), "Voulez-vous supprimer tous les groupes ?", parent=self)
+        group_deleted = messagebox.askyesno(t("confirm"), t("delete_all_groups"), parent=self)
         if group_deleted:
             open(GROUPS_FILE, "w", encoding="utf-8").close()
             data = load_connections()
@@ -1267,7 +1229,7 @@ class RDPApp(tk.Tk):
         if conn_deleted or group_deleted:
             messagebox.showinfo(t("info"), "Configuration supprimée.", parent=self)
         self.refresh_table()
-
+    
     def update_SwiftRDP(self):
         def progress_and_restart():
             progress_win = tk.Toplevel(self)
@@ -1286,10 +1248,10 @@ class RDPApp(tk.Tk):
             self.destroy()
             sys.exit(0)
         threading.Thread(target=progress_and_restart, daemon=True).start()
-
+    
     def support(self):
         webbrowser.open("https://github.com/Equinoxx83/SwiftRDP/issues")
-
+    
     def edit_connection_note(self, row):
         if window_exists(self, t("modify_note_title")):
             return
@@ -1310,7 +1272,7 @@ class RDPApp(tk.Tk):
                   font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=20, expand=True)
         tk.Button(btn_frame, text=t("return"), command=top.destroy,
                   font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=20, expand=True)
-
+    
     def save_note(self, top, text, row):
         new_note = text.get("1.0", tk.END).strip()
         new_row = row.copy()
@@ -1321,12 +1283,28 @@ class RDPApp(tk.Tk):
         self.refresh_table()
 
 if __name__ == "__main__":
+    # --- Singleton : vérifie si une instance existe déjà
+    singleton = check_singleton()
+    if singleton is None:
+        # Si une instance existe déjà, envoyer le lien rdp:// s'il y en a et quitter
+        if len(sys.argv) > 1 and sys.argv[1].startswith("rdp://"):
+            send_to_instance(sys.argv[1])
+        sys.exit(0)
+    
+    # Création de l'application principale
     app = RDPApp()
-    # Si un lien rdp:// est passé en argument, extraire l'IP et lancer le prompt de connexion
+    # Démarrage du thread de l'écoute du singleton
+    threading.Thread(target=singleton_listener, args=(singleton, app), daemon=True).start()
+    
+    # Si un lien rdp:// est passé en argument, le traiter
     if len(sys.argv) > 1 and sys.argv[1].startswith("rdp://"):
         ip = sys.argv[1][len("rdp://"):]
         app.after(100, lambda: app.prompt_rdp_connection(ip))
-    # Vérifier le mot de passe au lancement
+    
+    # Masquer la fenêtre principale avant vérification du mot de passe
+    app.withdraw()
     if not check_password(app):
         sys.exit(1)
+    app.deiconify()
+    
     app.mainloop()
