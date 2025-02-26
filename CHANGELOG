@@ -4,3 +4,5 @@
 - SwiftRDP added the name in the launch of the RDP window
 - Fixed the translation of some buttons
 - Fixed and improved some menu resolutions
+- Fixed bug for Défault application SwiftRDP
+- Added loading screen when update of SwiftRDP
