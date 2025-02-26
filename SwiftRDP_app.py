@@ -8,7 +8,7 @@ from functools import partial
 ######################################
 # Dossiers et chemins
 ######################################
-PROJECT_DIR = "/opt/SwiftRDP"  # Fichiers du projet : CHANGELOG, icon.png, SwiftRDP.desktop, SwiftRDP.sh, version.txt
+PROJECT_DIR = "/opt/SwiftRDP"  # Fichiers du projet (CHANGELOG, icon.png, SwiftRDP.desktop, SwiftRDP.sh, version.txt)
 CONFIG_DIR  = "/usr/local/share/appdata/.SwiftRDP"  # Fichiers de configuration
 
 # Créer CONFIG_DIR s'il n'existe pas et ajuster ses permissions
@@ -31,7 +31,7 @@ CHANGELOG_FILE    = os.path.join(PROJECT_DIR, "CHANGELOG")
 CHANGELOG_HIDE    = os.path.join(PROJECT_DIR, "CHANGELOGHIDE")
 VERSION_FILE      = os.path.join(PROJECT_DIR, "version.txt")
 ICON_FILE         = os.path.join(PROJECT_DIR, "icon.png")
-# Fichier de flag pour patch note à afficher après update
+# Flag indiquant qu'une mise à jour a été appliquée et que le patch note doit être affiché
 PATCH_NOTE_FLAG   = os.path.join(PROJECT_DIR, "PATCH_NOTE_PENDING")
 
 ######################################
@@ -539,7 +539,7 @@ def update_app(app, repo_url, remote_version):
         return
     finally:
         shutil.rmtree(temp_dir)
-    # Affichage d'une barre de progression pendant 10 secondes avant redémarrage
+    # Affichage d'une barre de progression pendant 10 secondes (modifiée à 10s ici) avant redémarrage
     def progress_and_restart():
         progress_win = tk.Toplevel(app)
         progress_win.title(t("update_complete"))
@@ -575,12 +575,12 @@ class RDPApp(tk.Tk):
         self.font_heading = ("Segoe Script", 12)
         self.create_widgets()
         self.refresh_table()
-        # Bind pour Ctrl+1 à Ctrl+9
+        # Bind pour Ctrl+1 à Ctrl+9 pour switcher entre fenêtres
         for i in range(1, 10):
             self.bind_all(f"<Control-Key-{i}>", lambda event, n=i: switch_to_window(n))
-        # Si le flag de patch note existe, l'afficher automatiquement et le supprimer
+        # Afficher le patch note uniquement si le flag existe (après mise à jour)
         if os.path.exists(PATCH_NOTE_FLAG):
-            self.after(500, lambda: self.show_patch_note_dialog(read_patch_note()))
+            self.after(2000, lambda: self.show_patch_note_dialog(read_patch_note()))
             os.remove(PATCH_NOTE_FLAG)
     
     def prompt_rdp_connection(self, ip):
@@ -597,6 +597,8 @@ class RDPApp(tk.Tk):
             return
         self.connection_in_progress = True
         start_time = time.time()
+        # Délai de timeout allongé à 15 secondes
+        timeout = 15
         if pwd_provided is None:
             pwd = simpledialog.askstring(t("password"), f"{t('enter_password_for')} {row[0]}:", show="*", parent=self)
         else:
@@ -646,18 +648,17 @@ class RDPApp(tk.Tk):
                 progress_win.destroy()
         update_progress()
         def check_window():
-            timeout = 10
-            interval = 0.5
             found = False
             while time.time() - start_time < timeout:
                 try:
                     output = subprocess.check_output(["wmctrl", "-l"], text=True)
                 except Exception:
                     output = ""
-                if "swiftrdp:" in output.lower():
+                # Vérifier que le titre contient "swiftRdp: <ip>" (en minuscules)
+                if f"swiftrdp: {row[1].lower()}" in output.lower():
                     found = True
                     break
-                time.sleep(interval)
+                time.sleep(0.5)
             # Forcer un temps minimum de 2 secondes d'affichage
             if time.time() - start_time < 2:
                 time.sleep(2 - (time.time() - start_time))
@@ -675,6 +676,37 @@ class RDPApp(tk.Tk):
                 self.after(0, lambda: messagebox.showerror(t("error"), t("connection_failed"), parent=self))
             self.connection_in_progress = False
         threading.Thread(target=check_window, daemon=True).start()
+    
+    def check_and_show_patch_note(self):
+        # Cette fonction n'est appelée qu'en cliquant sur le bouton ou via le flag après update
+        self.show_patch_note_dialog(read_patch_note())
+    
+    def show_patch_note_dialog(self, content, show_checkbox=True):
+        dialog = tk.Toplevel(self)
+        dialog.transient(self)
+        dialog.lift()
+        dialog.attributes("-topmost", True)
+        dialog.iconphoto(False, self.logo)
+        dialog.title(t("patch_note"))
+        dialog.geometry("800x600")
+        dialog.configure(bg=self.theme["bg"])
+        text = tk.Text(dialog, wrap=tk.WORD, font=self.font_main,
+                       bg=self.theme["entry_bg"], fg=self.theme["fg"])
+        text.insert(tk.END, content)
+        text.config(state="disabled")
+        text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        var_hide = tk.BooleanVar()
+        if show_checkbox:
+            check = tk.Checkbutton(dialog, text=t("dont_show_again"), variable=var_hide,
+                                   bg=self.theme["bg"], fg=self.theme["fg"], font=("Segoe Script", 14))
+            check.pack(anchor="w", padx=10, pady=5)
+        def close_dialog():
+            if show_checkbox and var_hide.get():
+                with open(os.path.join(PROJECT_DIR, "CHANGELOGHIDE"), "w", encoding="utf-8") as f:
+                    f.write(get_version())
+            dialog.destroy()
+        tk.Button(dialog, text=t("return"), command=close_dialog, font=self.font_main,
+                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(pady=10)
     
     def add_group(self, parent, combobox, var):
         new_grp = simpledialog.askstring(t("new_group"), t("enter_new_group"), parent=parent)
@@ -817,6 +849,7 @@ class RDPApp(tk.Tk):
         if window_exists(self, t("add_connection_title")):
             return
         top = tk.Toplevel(self)
+        top.transient(self)
         top.iconphoto(False, self.logo)
         top.title(t("add_connection_title"))
         top.geometry("650x300")
@@ -861,6 +894,7 @@ class RDPApp(tk.Tk):
         if window_exists(self, t("add_note_title")):
             return
         top = tk.Toplevel(self)
+        top.transient(self)
         top.iconphoto(False, self.logo)
         top.title(t("add_note_title"))
         top.geometry("600x350")
@@ -906,6 +940,7 @@ class RDPApp(tk.Tk):
         if window_exists(self, t("modify_connection_title")):
             return
         top = tk.Toplevel(self)
+        top.transient(self)
         top.iconphoto(False, self.logo)
         top.title(t("modify_connection_title"))
         top.geometry("650x300")
@@ -977,6 +1012,7 @@ class RDPApp(tk.Tk):
         if window_exists(self, t("manage_groups_title")):
             return
         top = tk.Toplevel(self)
+        top.transient(self)
         top.iconphoto(False, self.logo)
         top.title(t("manage_groups_title"))
         top.geometry("500x400")
@@ -1020,6 +1056,7 @@ class RDPApp(tk.Tk):
         if window_exists(self, t("options")):
             return
         top = tk.Toplevel(self)
+        top.transient(self)
         top.iconphoto(False, self.logo)
         top.title(t("options"))
         top.geometry("450x390")
@@ -1048,6 +1085,7 @@ class RDPApp(tk.Tk):
     
     def display_mode_menu(self):
         top = tk.Toplevel(self)
+        top.transient(self)
         top.iconphoto(False, self.logo)
         top.title(t("display_mode"))
         top.geometry("400x220")
@@ -1074,6 +1112,7 @@ class RDPApp(tk.Tk):
         if window_exists(self, t("preferences")):
             return
         top = tk.Toplevel(self)
+        top.transient(self)
         top.iconphoto(False, self.logo)
         top.title(t("preferences"))
         top.geometry("390x360")
@@ -1226,6 +1265,7 @@ class RDPApp(tk.Tk):
         if window_exists(self, t("modify_note_title")):
             return
         top = tk.Toplevel(self)
+        top.transient(self)
         top.iconphoto(False, self.logo)
         top.title(t("modify_note_title"))
         top.geometry("600x350")
@@ -1275,7 +1315,7 @@ if __name__ == "__main__":
         sys.exit(1)
     app.deiconify()
     
-    # Lancer la vérification d'update (le patch note ne s'affichera automatiquement qu'après une mise à jour via le flag)
+    # Lancer la vérification d'update (et le prompt de mise à jour)
     app.after(500, lambda: check_for_update(app))
     
     app.mainloop()
