@@ -8,7 +8,7 @@ from functools import partial
 ##############################
 # Dossiers et chemins
 ##############################
-PROJECT_DIR = "/opt/SwiftRDP"  # Fichiers du projet (CHANGELOG, icon.png, SwiftRDP.desktop, SwiftRDP.sh, version.txt)
+PROJECT_DIR = "/opt/SwiftRDP"  # Fichiers du projet : CHANGELOG, icon.png, SwiftRDP.desktop, SwiftRDP.sh, version.txt
 CONFIG_DIR  = "/usr/local/share/appdata/.SwiftRDP"  # Fichiers de configuration
 
 # Créer CONFIG_DIR s'il n'existe pas et ajuster ses permissions
@@ -38,7 +38,7 @@ ICON_FILE         = os.path.join(PROJECT_DIR, "icon.png")
 def hash_password(password):
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
-# Fonction de vérification du mot de passe (utilise le parent de l'app)
+# Vérification du mot de passe avant affichage de l'interface
 def check_password(parent):
     if os.path.exists(PASSWORD_FILE):
         with open(PASSWORD_FILE, "r", encoding="utf-8") as f:
@@ -53,6 +53,7 @@ def check_password(parent):
 # Mécanisme Singleton
 ##############################
 SINGLETON_PORT = 50000
+
 def check_singleton():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -533,6 +534,7 @@ def update_app(app, repo_url, remote_version):
         return
     finally:
         shutil.rmtree(temp_dir)
+    # Barre de progression pendant 10 secondes
     def progress_and_restart():
         progress_win = tk.Toplevel(app)
         progress_win.title(t("update_complete"))
@@ -570,12 +572,11 @@ class RDPApp(tk.Tk):
         self.refresh_table()
         threading.Thread(target=check_for_update, args=(self, ), daemon=True).start()
         self.check_and_show_patch_note()  # Affichage automatique du patch note
-        # Bind pour Ctrl+1 à Ctrl+9
+        # Bind pour Ctrl+1 à Ctrl+9 pour switcher entre fenêtres
         for i in range(1, 10):
             self.bind_all(f"<Control-Key-{i}>", lambda event, n=i: switch_to_window(n))
     
     def prompt_rdp_connection(self, ip):
-        # Si un lien rdp:// est passé, on demande login et mot de passe
         login = simpledialog.askstring("Login", "Entrez votre login :", parent=self)
         pwd = simpledialog.askstring("Mot de passe", "Entrez votre mot de passe :", show="*", parent=self)
         if login and pwd:
@@ -607,6 +608,7 @@ class RDPApp(tk.Tk):
             self.connection_in_progress = False
             return
         self.update_idletasks()
+        # Création d'une fenêtre de chargement avec barre de progression
         main_x = self.winfo_x()
         main_y = self.winfo_y()
         main_width = self.winfo_width()
@@ -1075,7 +1077,7 @@ class RDPApp(tk.Tk):
           command=lambda: self.show_patch_note_dialog(read_patch_note(), show_checkbox=False),
           font=self.font_main, bg=self.theme["button_bg"], fg=self.theme["button_fg"],
           relief="flat", width=30).pack(pady=5)
-        # Bouton pour accéder aux Préférences (qui inclut le bouton par défaut et le mode d'affichage)
+        # Bouton pour accéder aux Préférences (incluant le bouton par défaut, le mode d'affichage, etc.)
         tk.Button(btn_frame, text=t("preferences"), command=self.preferences_menu, font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
     
@@ -1139,6 +1141,9 @@ class RDPApp(tk.Tk):
                     f.write("no")
         tk.Button(top, text=t("default_rdp_label"), command=prompt_default_rdp, font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=35).pack(pady=10)
+        # Ajout du bouton "Mode d'affichage" dans les Préférences
+        tk.Button(top, text=t("display_mode"), command=self.display_mode_menu, font=self.font_main,
+                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=35).pack(pady=5)
         sec_frame = tk.Frame(top, bg=self.theme["bg"])
         sec_frame.pack(pady=10)
         tk.Button(sec_frame, text=t("set_password"), command=lambda: self.set_app_password(), font=self.font_main,
@@ -1283,17 +1288,15 @@ class RDPApp(tk.Tk):
         self.refresh_table()
 
 if __name__ == "__main__":
-    # --- Singleton : vérifie si une instance existe déjà
+    # Singleton : si une instance existe déjà, on envoie le lien rdp:// et on quitte
     singleton = check_singleton()
     if singleton is None:
-        # Si une instance existe déjà, envoyer le lien rdp:// s'il y en a et quitter
         if len(sys.argv) > 1 and sys.argv[1].startswith("rdp://"):
             send_to_instance(sys.argv[1])
         sys.exit(0)
     
     # Création de l'application principale
     app = RDPApp()
-    # Démarrage du thread de l'écoute du singleton
     threading.Thread(target=singleton_listener, args=(singleton, app), daemon=True).start()
     
     # Si un lien rdp:// est passé en argument, le traiter
@@ -1301,7 +1304,7 @@ if __name__ == "__main__":
         ip = sys.argv[1][len("rdp://"):]
         app.after(100, lambda: app.prompt_rdp_connection(ip))
     
-    # Masquer la fenêtre principale avant vérification du mot de passe
+    # Masquer la fenêtre principale jusqu'à vérification du mot de passe
     app.withdraw()
     if not check_password(app):
         sys.exit(1)
