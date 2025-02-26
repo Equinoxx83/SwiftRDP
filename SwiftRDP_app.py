@@ -5,10 +5,10 @@ import subprocess, os, zipfile, shutil, tempfile, threading, time, webbrowser, s
 from datetime import datetime
 from functools import partial
 
-##############################
+######################################
 # Dossiers et chemins
-##############################
-PROJECT_DIR = "/opt/SwiftRDP"  # Fichiers du projet : CHANGELOG, icon.png, SwiftRDP.desktop, SwiftRDP.sh, version.txt
+######################################
+PROJECT_DIR = "/opt/SwiftRDP"  # Fichiers du projet (CHANGELOG, icon.png, SwiftRDP.desktop, SwiftRDP.sh, version.txt)
 CONFIG_DIR  = "/usr/local/share/appdata/.SwiftRDP"  # Fichiers de configuration
 
 # Créer CONFIG_DIR s'il n'existe pas et ajuster ses permissions
@@ -32,13 +32,13 @@ CHANGELOG_HIDE    = os.path.join(PROJECT_DIR, "CHANGELOGHIDE")
 VERSION_FILE      = os.path.join(PROJECT_DIR, "version.txt")
 ICON_FILE         = os.path.join(PROJECT_DIR, "icon.png")
 
-##############################
+######################################
 # Fonctions utilitaires
-##############################
+######################################
 def hash_password(password):
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
-# Vérification du mot de passe avant affichage de l'interface
+# Vérification du mot de passe (sera appelée avant de dévoiler l'interface)
 def check_password(parent):
     if os.path.exists(PASSWORD_FILE):
         with open(PASSWORD_FILE, "r", encoding="utf-8") as f:
@@ -49,9 +49,9 @@ def check_password(parent):
             return False
     return True
 
-##############################
-# Mécanisme Singleton
-##############################
+######################################
+# Mécanisme Singleton (empêche plusieurs instances)
+######################################
 SINGLETON_PORT = 50000
 
 def check_singleton():
@@ -84,9 +84,9 @@ def send_to_instance(message):
     except Exception:
         pass
 
-##############################
+######################################
 # Configuration RDP par défaut
-##############################
+######################################
 if not os.path.exists(DEFAULT_RDP_FILE) or not open(DEFAULT_RDP_FILE, "r", encoding="utf-8").read().strip():
     if messagebox.askyesno("Application par défaut", "Voulez-vous définir SwiftRDP comme application par défaut pour les liens rdp:// ?"):
         with open(DEFAULT_RDP_FILE, "w", encoding="utf-8") as f:
@@ -100,9 +100,9 @@ else:
     if DEFAULT_RDP:
         subprocess.call(["xdg-mime", "default", "SwiftRDP.desktop", "x-scheme-handler/rdp"])
 
-##############################
+######################################
 # Chargement de la configuration (langue, thème, mode d'affichage)
-##############################
+######################################
 if os.path.exists(LANGUAGE_FILE):
     with open(LANGUAGE_FILE, "r", encoding="utf-8") as f:
          CURRENT_LANG = f.read().strip()
@@ -141,9 +141,9 @@ def get_theme():
              "tree_fg": "#c0c0c0"
          }
 
-##############################
+######################################
 # Traductions
-##############################
+######################################
 translations = {
     "fr": {
          "title": "SwiftRDP",
@@ -315,9 +315,9 @@ def t(key, **kwargs):
     text = translations.get(CURRENT_LANG, translations["fr"]).get(key, key)
     return text.format(**kwargs)
 
-##############################
+######################################
 # Fichiers de configuration et projet
-##############################
+######################################
 PROJECT_DIR = "/opt/SwiftRDP"
 ICON_FILE = os.path.join(PROJECT_DIR, "icon.png")
 # S'assurer que FILE_CONNS et GROUPS_FILE existent
@@ -441,9 +441,9 @@ def window_exists(root, title):
             return True
     return False
 
-##############################
+######################################
 # Fonctions pour le patch note
-##############################
+######################################
 def get_version():
     try:
         with open(VERSION_FILE, "r", encoding="utf-8") as f:
@@ -458,9 +458,9 @@ def read_patch_note():
             return content if content else t("patch_note_empty")
     return t("patch_note_empty")
 
-##############################
+######################################
 # Fonction pour switcher entre fenêtres (Ctrl+1 à Ctrl+9)
-##############################
+######################################
 def switch_to_window(n):
     try:
         output = subprocess.check_output(["wmctrl", "-l"], text=True)
@@ -476,9 +476,9 @@ def switch_to_window(n):
     if 0 <= n-1 < len(windows):
         subprocess.call(["wmctrl", "-i", "-a", windows[n-1]])
 
-##############################
-# Fonctions pour la mise à jour (barre de progression avant redémarrage)
-##############################
+######################################
+# Fonctions pour la mise à jour (barre de progression)
+######################################
 def check_for_update(app, from_menu=False):
     repo_url = "https://github.com/Equinoxx83/SwiftRDP.git"
     temp_dir = tempfile.mkdtemp()
@@ -534,7 +534,6 @@ def update_app(app, repo_url, remote_version):
         return
     finally:
         shutil.rmtree(temp_dir)
-    # Barre de progression pendant 10 secondes
     def progress_and_restart():
         progress_win = tk.Toplevel(app)
         progress_win.title(t("update_complete"))
@@ -553,9 +552,9 @@ def update_app(app, repo_url, remote_version):
         sys.exit(0)
     threading.Thread(target=progress_and_restart, daemon=True).start()
 
-##############################
+######################################
 # Classe principale de l'application
-##############################
+######################################
 class RDPApp(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -570,9 +569,8 @@ class RDPApp(tk.Tk):
         self.font_heading = ("Segoe Script", 12)
         self.create_widgets()
         self.refresh_table()
-        threading.Thread(target=check_for_update, args=(self, ), daemon=True).start()
-        self.check_and_show_patch_note()  # Affichage automatique du patch note
-        # Bind pour Ctrl+1 à Ctrl+9 pour switcher entre fenêtres
+        # Les vérifications d'update et de patch note ne seront lancées qu'après saisie du mot de passe
+        # Bind pour Ctrl+1 à Ctrl+9
         for i in range(1, 10):
             self.bind_all(f"<Control-Key-{i}>", lambda event, n=i: switch_to_window(n))
     
@@ -589,6 +587,7 @@ class RDPApp(tk.Tk):
         if self.connection_in_progress:
             return
         self.connection_in_progress = True
+        start_time = time.time()
         if pwd_provided is None:
             pwd = simpledialog.askstring(t("password"), f"{t('enter_password_for')} {row[0]}:", show="*", parent=self)
         else:
@@ -631,11 +630,7 @@ class RDPApp(tk.Tk):
         pb = ttk.Progressbar(progress_win, mode="determinate", maximum=100,
                              style="grey.Horizontal.TProgressbar")
         pb.pack(fill=tk.X, padx=20, pady=10)
-        progress_done = False
         def update_progress(count=0):
-            nonlocal progress_done
-            if progress_done:
-                return
             if count <= 100:
                 pb['value'] = count
                 self.after(100, update_progress, count+1)
@@ -643,7 +638,7 @@ class RDPApp(tk.Tk):
                 progress_win.destroy()
         update_progress()
         def check_window():
-            nonlocal progress_done
+            nonlocal start_time
             timeout = 10
             interval = 0.5
             elapsed = 0
@@ -657,11 +652,13 @@ class RDPApp(tk.Tk):
                     found = True
                     break
                 time.sleep(interval)
-                elapsed += interval
-            progress_done = True
+                elapsed = time.time() - start_time
+            # Forcer un temps minimum de 2 secondes d'affichage
+            if time.time() - start_time < 2:
+                time.sleep(2 - (time.time() - start_time))
             try:
                 progress_win.destroy()
-            except:
+            except Exception:
                 pass
             if found:
                 new_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1077,7 +1074,7 @@ class RDPApp(tk.Tk):
           command=lambda: self.show_patch_note_dialog(read_patch_note(), show_checkbox=False),
           font=self.font_main, bg=self.theme["button_bg"], fg=self.theme["button_fg"],
           relief="flat", width=30).pack(pady=5)
-        # Bouton pour accéder aux Préférences (incluant le bouton par défaut, le mode d'affichage, etc.)
+        # Bouton pour accéder aux Préférences (incluant le bouton par défaut et le mode d'affichage)
         tk.Button(btn_frame, text=t("preferences"), command=self.preferences_menu, font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
     
@@ -1141,7 +1138,7 @@ class RDPApp(tk.Tk):
                     f.write("no")
         tk.Button(top, text=t("default_rdp_label"), command=prompt_default_rdp, font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=35).pack(pady=10)
-        # Ajout du bouton "Mode d'affichage" dans les Préférences
+        # Bouton pour le mode d'affichage
         tk.Button(top, text=t("display_mode"), command=self.display_mode_menu, font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=35).pack(pady=5)
         sec_frame = tk.Frame(top, bg=self.theme["bg"])
@@ -1288,7 +1285,7 @@ class RDPApp(tk.Tk):
         self.refresh_table()
 
 if __name__ == "__main__":
-    # Singleton : si une instance existe déjà, on envoie le lien rdp:// et on quitte
+    # Singleton : vérifier si une instance existe déjà
     singleton = check_singleton()
     if singleton is None:
         if len(sys.argv) > 1 and sys.argv[1].startswith("rdp://"):
@@ -1304,10 +1301,13 @@ if __name__ == "__main__":
         ip = sys.argv[1][len("rdp://"):]
         app.after(100, lambda: app.prompt_rdp_connection(ip))
     
-    # Masquer la fenêtre principale jusqu'à vérification du mot de passe
+    # Masquer la fenêtre principale jusqu'à la saisie du mot de passe
     app.withdraw()
     if not check_password(app):
         sys.exit(1)
     app.deiconify()
+    # Après dévissage, lancer les vérifications d'update et du patch note
+    app.after(500, lambda: check_for_update(app))
+    app.after(500, lambda: app.check_and_show_patch_note())
     
     app.mainloop()
