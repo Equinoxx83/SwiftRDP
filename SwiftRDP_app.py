@@ -40,6 +40,29 @@ PATCH_NOTE_FLAG   = os.path.join(PROJECT_DIR, "PATCH_NOTE_PENDING")
 def hash_password(password):
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
+def ask_password_custom(parent, title, prompt):
+        d = tk.Toplevel(parent)
+        d.title(title)
+        d.transient(parent)
+        d.grab_set()
+        d.attributes("-topmost", True)
+        d.focus_force()
+        tk.Label(d, text=prompt, font=parent.font_main).pack(padx=20, pady=10)
+        entry = tk.Entry(d, show="*")
+        entry.pack(padx=20, pady=10)
+        result = {"value": None}
+        def on_ok():
+            result["value"] = entry.get()
+            d.destroy()
+        def on_cancel():
+            d.destroy()
+        btn_frame = tk.Frame(d)
+        btn_frame.pack(pady=10)
+        tk.Button(btn_frame, text="OK", command=on_ok, font=parent.font_main).pack(side="left", padx=10)
+        tk.Button(btn_frame, text="Annuler", command=on_cancel, font=parent.font_main).pack(side="left", padx=10)
+        parent.wait_window(d)
+        return result["value"]
+
 # Demande de mot de passe avant d'afficher l'interface
 def check_password(parent):
     if os.path.exists(PASSWORD_FILE):
@@ -1086,6 +1109,9 @@ class RDPApp(tk.Tk):
     def display_mode_menu(self):
         top = tk.Toplevel(self)
         top.transient(self)
+        top.grab_set()
+        top.attributes("-topmost", True)
+        top.focus_force()
         top.iconphoto(False, self.logo)
         top.title(t("display_mode"))
         top.geometry("400x220")
@@ -1107,12 +1133,17 @@ class RDPApp(tk.Tk):
             top.destroy()
         tk.Button(top, text=t("save"), command=save_mode, font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(pady=20)
-    
+        # Rendre la fenêtre "topmost" pendant son affichage
+        top.lift()
+        top.attributes("-topmost", True)
+
     def preferences_menu(self):
         if window_exists(self, t("preferences")):
             return
         top = tk.Toplevel(self)
         top.transient(self)
+        top.grab_set()                 # Force le mode modal
+        top.attributes("-topmost", True)  # Affiche la fenêtre au-dessus
         top.iconphoto(False, self.logo)
         top.title(t("preferences"))
         top.geometry("390x360")
@@ -1173,14 +1204,18 @@ class RDPApp(tk.Tk):
                 top.destroy()
         tk.Button(top, text=t("save"), command=save_preferences, font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(pady=10)
+        # On peut enlever le topmost si souhaité : top.attributes("-topmost", False)
     
+    
+
     def set_app_password(self):
+        # Utilise la boîte de dialogue personnalisée pour être certain qu'elle apparaisse au-dessus
         if os.path.exists(PASSWORD_FILE):
-            current = simpledialog.askstring("Mot de passe actuel", "Entrez le mot de passe actuel :", show="*", parent=self)
+            current = ask_password_custom(self, "Mot de passe actuel", "Entrez le mot de passe actuel :")
             if not current or hash_password(current) != open(PASSWORD_FILE, "r", encoding="utf-8").read().strip():
                 messagebox.showerror("Erreur", "Mot de passe actuel incorrect.", parent=self)
                 return
-        pwd1 = simpledialog.askstring("Définir le mot de passe", "Entrez le nouveau mot de passe (laisser vide pour supprimer) :", show="*", parent=self)
+        pwd1 = ask_password_custom(self, "Définir le mot de passe", "Entrez le nouveau mot de passe (laisser vide pour supprimer) :")
         if pwd1 is None:
             return
         if pwd1 == "":
@@ -1188,7 +1223,7 @@ class RDPApp(tk.Tk):
                 os.remove(PASSWORD_FILE)
             messagebox.showinfo("Info", "Mot de passe supprimé.", parent=self)
         else:
-            pwd2 = simpledialog.askstring("Définir le mot de passe", "Confirmez le mot de passe :", show="*", parent=self)
+            pwd2 = ask_password_custom(self, "Définir le mot de passe", "Confirmez le mot de passe :")
             if pwd1 != pwd2:
                 messagebox.showerror("Erreur", "Les mots de passe ne correspondent pas.", parent=self)
                 return
@@ -1293,7 +1328,7 @@ class RDPApp(tk.Tk):
         self.refresh_table()
 
 if __name__ == "__main__":
-    # Singleton : vérifie si une instance existe déjà
+    # Singleton et autres initialisations (inchangées)
     singleton = check_singleton()
     if singleton is None:
         if len(sys.argv) > 1 and sys.argv[1].startswith("rdp://"):
@@ -1303,19 +1338,12 @@ if __name__ == "__main__":
     # Création de l'application principale
     app = RDPApp()
     threading.Thread(target=singleton_listener, args=(singleton, app), daemon=True).start()
-    
-    # Si un lien rdp:// est passé en argument, le traiter
     if len(sys.argv) > 1 and sys.argv[1].startswith("rdp://"):
         ip = sys.argv[1][len("rdp://"):]
         app.after(100, lambda: app.prompt_rdp_connection(ip))
-    
-    # Masquer la fenêtre principale jusqu'à saisie du mot de passe
+    # Masquer la fenêtre principale pour demander le mot de passe avant de l'afficher
     app.withdraw()
     if not check_password(app):
         sys.exit(1)
     app.deiconify()
-    
-    # Lancer la vérification d'update (et le prompt de mise à jour)
-    app.after(500, lambda: check_for_update(app))
-    
     app.mainloop()
