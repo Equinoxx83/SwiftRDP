@@ -202,7 +202,7 @@ translations = {
          "new_version_available": "Une nouvelle version est disponible. Voulez-vous mettre à jour SwiftRDP ?",
          "no_update_available": "Aucune mise à jour disponible.",
          "update_failed": "La mise à jour a échoué",
-         "update_complete": "Mise à jour terminée. L'application va redémarrer.",
+         "update_complete": "Mise à jour en cours.",
          "select_connection": "Veuillez sélectionner une connexion.",
          "delete_connection": "Supprimer la connexion",
          "connection_deleted": "Connexion supprimée.",
@@ -576,7 +576,7 @@ def update_app(app, repo_url, remote_version):
         progress_win.title(t("update_complete"))
         progress_win.geometry("400x100")
         progress_win.configure(bg=app.theme["bg"])
-        tk.Label(progress_win, text="Redémarrage en cours...", font=app.font_main,
+        tk.Label(progress_win, text="Mise à jour en cours...", font=app.font_main,
                  bg=app.theme["bg"], fg=app.theme["fg"]).pack(pady=10)
         pb = ttk.Progressbar(progress_win, mode="determinate", maximum=100)
         pb.pack(fill=tk.X, padx=20, pady=10)
