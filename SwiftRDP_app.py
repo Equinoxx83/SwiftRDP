@@ -23,7 +23,7 @@ GROUPS_FILE       = os.path.join(CONFIG_DIR, "groups.txt")
 PASSWORD_FILE     = os.path.join(CONFIG_DIR, "password.conf")
 SHORTCUTS_FILE    = os.path.join(CONFIG_DIR, "shortcuts.conf")
 DISPLAY_MODE_FILE = os.path.join(CONFIG_DIR, "display_mode.conf")
-DEFAULT_RDP_FILE  = os.path.join(CONFIG_DIR, "default_rdp.conf")
+DEFAULT_RDP_FILE  = os.path.join(CONFIG_DIR, "default_rdp.conf")  # Contiendra "yes" ou "no"
 
 # Fichiers du projet (dans PROJECT_DIR)
 CHANGELOG_FILE    = os.path.join(PROJECT_DIR, "CHANGELOG")
@@ -32,37 +32,34 @@ VERSION_FILE      = os.path.join(PROJECT_DIR, "version.txt")
 ICON_FILE         = os.path.join(PROJECT_DIR, "icon.png")
 PATCH_NOTE_FLAG   = os.path.join(PROJECT_DIR, "PATCH_NOTE_PENDING")
 
-# Fichier de verrouillage pour l'unicité de l'application
-LOCKFILE = os.path.join(CONFIG_DIR, "swiftRDP.lock")
-
 ######################################
 # Fonctions utilitaires
 ######################################
 def hash_password(password):
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
-# Boîte de dialogue personnalisée pour demander un mot de passe (pour préférences)
+# Boîte de dialogue personnalisée pour demander un mot de passe (utilisée dans Préférences)
 def ask_password_custom(parent, title, prompt):
-    d = tk.Toplevel(parent)
-    d.title(title)
-    d.transient(parent)
-    d.grab_set()
-    d.attributes("-topmost", True)
-    d.focus_force()
-    tk.Label(d, text=prompt, font=parent.font_main).pack(padx=20, pady=10)
-    entry = tk.Entry(d, show="*")
+    dlg = tk.Toplevel(parent)
+    dlg.title(title)
+    dlg.transient(parent)
+    dlg.grab_set()
+    dlg.attributes("-topmost", True)
+    dlg.focus_force()
+    tk.Label(dlg, text=prompt, font=parent.font_main).pack(padx=20, pady=10)
+    entry = tk.Entry(dlg, show="*")
     entry.pack(padx=20, pady=10)
     result = {"value": None}
     def on_ok():
         result["value"] = entry.get()
-        d.destroy()
+        dlg.destroy()
     def on_cancel():
-        d.destroy()
-    btn_frame = tk.Frame(d)
+        dlg.destroy()
+    btn_frame = tk.Frame(dlg)
     btn_frame.pack(pady=10)
     tk.Button(btn_frame, text="OK", command=on_ok, font=parent.font_main).pack(side="left", padx=10)
     tk.Button(btn_frame, text="Annuler", command=on_cancel, font=parent.font_main).pack(side="left", padx=10)
-    parent.wait_window(d)
+    parent.wait_window(dlg)
     return result["value"]
 
 def check_password(parent):
@@ -75,7 +72,7 @@ def check_password(parent):
             return False
     return True
 
-# Pour forcer une fenêtre modale (toujours au-dessus)
+# Pour forcer une fenêtre modale et la placer toujours au-dessus
 def make_modal(win, parent):
     win.transient(parent)
     win.grab_set()
@@ -83,36 +80,45 @@ def make_modal(win, parent):
     win.attributes("-topmost", True)
 
 ######################################
-# Singleton via verrou de fichier et socket
+# Gestion de la single instance via socket
 ######################################
-lockfile = open(LOCKFILE, "w")
-try:
-    fcntl.flock(lockfile, fcntl.LOCK_EX | fcntl.LOCK_NB)
-except IOError:
-    # Si l'application est déjà lancée, on envoie le lien rdp:// si fourni
-    if len(sys.argv) > 1:
-        try:
-            client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            client.connect(("127.0.0.1", 50000))
-            client.sendall(" ".join(sys.argv[1:]).encode())
-            client.close()
-        except Exception:
-            pass
+# Avant de lancer l'appli, on essaie de se connecter sur le port 50000.
+def send_instance_message():
+    try:
+        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client.connect(("127.0.0.1", 50000))
+        if len(sys.argv) > 1:
+            msg = " ".join(sys.argv[1:])
+            client.sendall(msg.encode())
+        client.close()
+        return True
+    except Exception:
+        return False
+
+# Si une instance est déjà ouverte, on envoie le lien (s'il y en a) et on quitte.
+if send_instance_message():
     sys.exit(0)
 
+# Socket listener pour recevoir les liens rdp:// dans l'instance principale
 def socket_listener(app):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.bind(("127.0.0.1", 50000))
     s.listen(1)
+    print("Socket listener démarré sur le port 50000")
     while True:
         try:
             conn, addr = s.accept()
             data = conn.recv(1024).decode().strip()
+            print("Message reçu via socket :", data)
             if data.startswith("rdp://"):
                 ip = data[len("rdp://"):]
-                app.after(100, lambda: app.prompt_rdp_connection(ip))
+                # Lancer une nouvelle instance avec le lien RDP en argument
+                subprocess.Popen(["/bin/bash", os.path.join(PROJECT_DIR, "SwiftRDP.sh"), f"rdp://{ip}"])
+                # Fermer l'instance actuelle après un délai court
+                app.after(200, app.destroy)
             conn.close()
-        except Exception:
+        except Exception as e:
+            print("Erreur dans le socket_listener :", e)
             break
 
 ######################################
@@ -148,7 +154,7 @@ if os.path.exists(DISPLAY_MODE_FILE):
     with open(DISPLAY_MODE_FILE, "r", encoding="utf-8") as f:
          CONN_DISPLAY_MODE = f.read().strip()
 else:
-    CONN_DISPLAY_MODE = "fenetres"  # ou "onglets"
+    CONN_DISPLAY_MODE = "fenetres"
 
 def get_theme():
     if CURRENT_THEME == "light":
@@ -164,10 +170,10 @@ def get_theme():
     else:
          return {
              "bg": "#2b2b2b",
-             "fg": "#c0c0c0",
+             "fg": "#ffffff",
              "entry_bg": "#3a3a3a",
              "button_bg": "#3a3a3a",
-             "button_fg": "#c0c0c0",
+             "button_fg": "#ffffff",
              "tree_bg": "#2b2b2b",
              "tree_fg": "#c0c0c0"
          }
@@ -856,8 +862,8 @@ class RDPApp(tk.Tk):
             top.geometry("600x400")
             top.configure(bg=self.theme["bg"])
             tk.Label(top, text=f"{t('note_for')} {row[0]}:", font=("Segoe Script", 12),
-                     bg=self.theme["bg"], fg=self.theme["fg"]).pack(pady=10)
-            text = tk.Text(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["fg"],
+                     bg=self.theme["bg"], fg=self.theme["button_fg"]).pack(pady=10)
+            text = tk.Text(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"],
                             wrap=tk.WORD, height=15, width=70, relief="flat")
             text.insert(tk.END, full_note)
             text.config(state="disabled")
@@ -884,16 +890,16 @@ class RDPApp(tk.Tk):
         top.geometry("650x300")
         top.configure(bg=self.theme["bg"])
         top.resizable(False, False)
-        tk.Label(top, text=t("name"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["fg"]).grid(row=0, column=0, padx=15, pady=8, sticky="e")
-        e_name = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["fg"], relief="flat", width=50)
+        tk.Label(top, text=t("name"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"]).grid(row=0, column=0, padx=15, pady=8, sticky="e")
+        e_name = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"], relief="flat", width=50)
         e_name.grid(row=0, column=1, padx=15, pady=8, sticky="w")
-        tk.Label(top, text=t("ip"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["fg"]).grid(row=1, column=0, padx=15, pady=8, sticky="e")
-        e_ip = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["fg"], relief="flat", width=50)
+        tk.Label(top, text=t("ip"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"]).grid(row=1, column=0, padx=15, pady=8, sticky="e")
+        e_ip = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"], relief="flat", width=50)
         e_ip.grid(row=1, column=1, padx=15, pady=8, sticky="w")
-        tk.Label(top, text=t("login"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["fg"]).grid(row=2, column=0, padx=15, pady=8, sticky="e")
-        e_login = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["fg"], relief="flat", width=50)
+        tk.Label(top, text=t("login"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"]).grid(row=2, column=0, padx=15, pady=8, sticky="e")
+        e_login = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"], relief="flat", width=50)
         e_login.grid(row=2, column=1, padx=15, pady=8, sticky="w")
-        tk.Label(top, text=t("group"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["fg"]).grid(row=3, column=0, padx=15, pady=8, sticky="e")
+        tk.Label(top, text=t("group"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"]).grid(row=3, column=0, padx=15, pady=8, sticky="e")
         existing_groups = get_existing_groups()
         group_var = tk.StringVar()
         group_options = existing_groups if existing_groups else []
@@ -914,7 +920,6 @@ class RDPApp(tk.Tk):
                   font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=20).pack(pady=5)
         btn_frame_top = tk.Frame(top, bg=self.theme["bg"])
         btn_frame_top.grid(row=5, column=0, columnspan=2, pady=8)
-        # Fermer le menu Options si ouvert (ici, on suppose que si add_connection est appelé, le menu Options a été fermé)
         tk.Button(btn_frame_top, text=t("save"), command=lambda: self.save_new_connection(top, e_name, e_ip, e_login, group_var, top.note),
                   font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=15, expand=True)
         tk.Button(btn_frame_top, text=t("return"), command=top.destroy,
@@ -929,8 +934,8 @@ class RDPApp(tk.Tk):
         top.title(t("add_note_title"))
         top.geometry("600x350")
         top.configure(bg=self.theme["bg"])
-        tk.Label(top, text=t("add_note"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["fg"]).pack(pady=10)
-        text = tk.Text(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["fg"],
+        tk.Label(top, text=t("add_note"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"]).pack(pady=10)
+        text = tk.Text(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"],
                         wrap=tk.WORD, height=10, width=70, relief="flat")
         text.pack(padx=20, pady=10, fill=tk.BOTH, expand=True)
         btn_frame = tk.Frame(top, bg=self.theme["bg"])
@@ -976,19 +981,19 @@ class RDPApp(tk.Tk):
         top.geometry("650x300")
         top.configure(bg=self.theme["bg"])
         top.resizable(False, False)
-        tk.Label(top, text=t("name"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["fg"]).grid(row=0, column=0, padx=15, pady=8, sticky="e")
-        e_name = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["fg"], relief="flat", width=50)
+        tk.Label(top, text=t("name"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"]).grid(row=0, column=0, padx=15, pady=8, sticky="e")
+        e_name = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"], relief="flat", width=50)
         e_name.insert(0, original_row[0])
         e_name.grid(row=0, column=1, padx=15, pady=8, sticky="w")
-        tk.Label(top, text=t("ip"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["fg"]).grid(row=1, column=0, padx=15, pady=8, sticky="e")
-        e_ip = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["fg"], relief="flat", width=50)
+        tk.Label(top, text=t("ip"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"]).grid(row=1, column=0, padx=15, pady=8, sticky="e")
+        e_ip = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"], relief="flat", width=50)
         e_ip.insert(0, original_row[1])
         e_ip.grid(row=1, column=1, padx=15, pady=8, sticky="w")
-        tk.Label(top, text=t("login"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["fg"]).grid(row=2, column=0, padx=15, pady=8, sticky="e")
-        e_login = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["fg"], relief="flat", width=50)
+        tk.Label(top, text=t("login"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"]).grid(row=2, column=0, padx=15, pady=8, sticky="e")
+        e_login = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"], relief="flat", width=50)
         e_login.insert(0, original_row[2])
         e_login.grid(row=2, column=1, padx=15, pady=8, sticky="w")
-        tk.Label(top, text=t("group"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["fg"]).grid(row=3, column=0, padx=15, pady=8, sticky="e")
+        tk.Label(top, text=t("group"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"]).grid(row=3, column=0, padx=15, pady=8, sticky="e")
         existing_groups = get_existing_groups()
         group_var = tk.StringVar(value=original_row[5] if original_row[5] else "")
         group_options = existing_groups if existing_groups else []
@@ -1049,8 +1054,8 @@ class RDPApp(tk.Tk):
         top.title(t("manage_groups_title"))
         top.geometry("500x400")
         top.configure(bg=self.theme["bg"])
-        tk.Label(top, text=t("existing_groups"), font=self.font_main, bg=self.theme["bg"], fg=self.theme["fg"]).pack(pady=10)
-        listbox = tk.Listbox(top, font=self.font_main, bg=self.theme["entry_bg"], fg=self.theme["fg"], selectmode=tk.SINGLE)
+        tk.Label(top, text=t("existing_groups"), font=self.font_main, bg=self.theme["bg"], fg=self.theme["button_fg"]).pack(pady=10)
+        listbox = tk.Listbox(top, font=self.font_main, bg=self.theme["entry_bg"], fg=self.theme["button_fg"], selectmode=tk.SINGLE)
         listbox.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
         groups = get_existing_groups()
         for grp in groups:
@@ -1085,7 +1090,6 @@ class RDPApp(tk.Tk):
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=10)
     
     def options_menu(self):
-        # Lorsqu'on ouvre Options, si on clique sur un bouton, on ferme automatiquement le menu Options
         if window_exists(self, t("options")):
             return
         top = tk.Toplevel(self)
@@ -1113,7 +1117,6 @@ class RDPApp(tk.Tk):
         tk.Button(btn_frame, text=t("view_patch_note"),
                   command=lambda: [top.destroy(), self.show_patch_note_dialog(read_patch_note(), show_checkbox=False)], font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
-        # Bouton pour accéder aux Préférences (ouverture d'une nouvelle fenêtre Préférences)
         tk.Button(btn_frame, text=t("preferences"), command=lambda: [top.destroy(), self.preferences_menu()], font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
     
@@ -1128,9 +1131,9 @@ class RDPApp(tk.Tk):
         top.configure(bg=self.theme["bg"])
         mode_var = tk.StringVar(value=CONN_DISPLAY_MODE)
         tk.Radiobutton(top, text=t("fenetres"), variable=mode_var, value="fenetres",
-                       bg=self.theme["bg"], fg=self.theme["fg"], font=self.font_main).pack(anchor="w", padx=20, pady=10)
+                       bg=self.theme["bg"], fg=self.theme["button_fg"], font=self.font_main).pack(anchor="w", padx=20, pady=10)
         tk.Radiobutton(top, text=t("onglets"), variable=mode_var, value="onglets",
-                       bg=self.theme["bg"], fg=self.theme["fg"], font=self.font_main).pack(anchor="w", padx=20, pady=10)
+                       bg=self.theme["bg"], fg=self.theme["button_fg"], font=self.font_main).pack(anchor="w", padx=20, pady=10)
         def save_mode():
             global CONN_DISPLAY_MODE
             CONN_DISPLAY_MODE = mode_var.get()
@@ -1147,7 +1150,6 @@ class RDPApp(tk.Tk):
         top.attributes("-topmost", True)
     
     def preferences_menu(self):
-        # Cette fenêtre de préférences est distincte du menu Options
         if window_exists(self, t("preferences")):
             return
         top = tk.Toplevel(self)
@@ -1156,63 +1158,69 @@ class RDPApp(tk.Tk):
         top.attributes("-topmost", True)
         top.iconphoto(False, self.logo)
         top.title(t("preferences"))
-        top.geometry("420x400")
+        top.geometry("420x450")
         top.configure(bg=self.theme["bg"])
-    
-        # Section pour langue
+        # Section Langue
         lang_frame = tk.Frame(top, bg=self.theme["bg"])
         lang_frame.pack(pady=10)
-        tk.Label(lang_frame, text=t("language"), font=self.font_main, bg=self.theme["bg"], fg=self.theme["fg"]).pack(anchor="w", padx=10)
+        tk.Label(lang_frame, text=t("language"), font=self.font_main, bg=self.theme["bg"], fg=self.theme["button_fg"]).pack(anchor="w", padx=10)
         lang_var = tk.StringVar(value=CURRENT_LANG)
-        # Couleurs pour thème
-        if CURRENT_THEME == "dark":
-            sel_lang = "#bbbbbb"
-            unsel_lang = "#555555"
+        if CURRENT_THEME=="dark":
+            sel_color = "#dddddd"
+            unsel_color = "#555555"
         else:
-            sel_lang = "#444444"
-            unsel_lang = "#cccccc"
+            sel_color = "#d0d0d0"
+            unsel_color = "#eeeeee"
         btn_lang_fr = tk.Button(lang_frame, text="Français", font=self.font_main, width=10,
-                                 command=lambda: [lang_var.set("fr"), btn_lang_fr.config(bg=sel_lang), btn_lang_en.config(bg=unsel_lang)],
-                                 bg=sel_lang if CURRENT_LANG=="fr" else unsel_lang, fg=self.theme["button_fg"])
+                                 command=lambda: [lang_var.set("fr"), btn_lang_fr.config(bg=sel_color), btn_lang_en.config(bg=unsel_color)],
+                                 bg=sel_color if CURRENT_LANG=="fr" else unsel_color, fg="black")
         btn_lang_en = tk.Button(lang_frame, text="English", font=self.font_main, width=10,
-                                 command=lambda: [lang_var.set("en"), btn_lang_en.config(bg=sel_lang), btn_lang_fr.config(bg=unsel_lang)],
-                                 bg=sel_lang if CURRENT_LANG=="en" else unsel_lang, fg=self.theme["button_fg"])
+                                 command=lambda: [lang_var.set("en"), btn_lang_en.config(bg=sel_color), btn_lang_fr.config(bg=unsel_color)],
+                                 bg=sel_color if CURRENT_LANG=="en" else unsel_color, fg="black")
         btn_lang_fr.pack(side=tk.LEFT, padx=10)
         btn_lang_en.pack(side=tk.LEFT, padx=10)
     
-        # Section pour thème
+        # Section Thème
         theme_frame = tk.Frame(top, bg=self.theme["bg"])
         theme_frame.pack(pady=10)
-        tk.Label(theme_frame, text=t("theme"), font=self.font_main, bg=self.theme["bg"], fg=self.theme["fg"]).pack(anchor="w", padx=10)
+        tk.Label(theme_frame, text=t("theme"), font=self.font_main, bg=self.theme["bg"], fg=self.theme["button_fg"]).pack(anchor="w", padx=10)
         theme_var = tk.StringVar(value=CURRENT_THEME)
-        if CURRENT_THEME == "dark":
-            sel_theme = "#bbbbbb"
-            unsel_theme = "#555555"
-        else:
-            sel_theme = "#444444"
-            unsel_theme = "#cccccc"
         btn_theme_dark = tk.Button(theme_frame, text=t("dark"), font=self.font_main, width=10,
-                                    command=lambda: [theme_var.set("dark"), btn_theme_dark.config(bg=sel_theme), btn_theme_light.config(bg=unsel_theme)],
-                                    bg=sel_theme if CURRENT_THEME=="dark" else unsel_theme, fg=self.theme["button_fg"])
+                                   command=lambda: [theme_var.set("dark"), btn_theme_dark.config(bg=sel_color), btn_theme_light.config(bg=unsel_color)],
+                                   bg=sel_color if CURRENT_THEME=="dark" else unsel_color, fg="black")
         btn_theme_light = tk.Button(theme_frame, text=t("light"), font=self.font_main, width=10,
-                                     command=lambda: [theme_var.set("light"), btn_theme_light.config(bg=sel_theme), btn_theme_dark.config(bg=unsel_theme)],
-                                     bg=sel_theme if CURRENT_THEME=="light" else unsel_theme, fg=self.theme["button_fg"])
+                                    command=lambda: [theme_var.set("light"), btn_theme_light.config(bg=sel_color), btn_theme_dark.config(bg=unsel_color)],
+                                    bg=sel_color if CURRENT_THEME=="light" else unsel_color, fg="black")
         btn_theme_dark.pack(side=tk.LEFT, padx=10)
         btn_theme_light.pack(side=tk.LEFT, padx=10)
     
-        # Section pour changer le mot de passe
+        # Section Mot de passe
         pwd_frame = tk.Frame(top, bg=self.theme["bg"])
         pwd_frame.pack(pady=10, padx=10, fill=tk.X)
-        tk.Label(pwd_frame, text="Définir/modifier mot de passe de l'application :", font=self.font_main, bg=self.theme["bg"], fg=self.theme["fg"]).pack(anchor="w", pady=5)
-        tk.Label(pwd_frame, text="Mot de passe actuel :", font=self.font_main, bg=self.theme["bg"], fg=self.theme["fg"]).pack(anchor="w", pady=2)
-        current_pwd = tk.Entry(pwd_frame, show="*", width=20)
-        current_pwd.pack(anchor="w", pady=2, padx=5)
-        tk.Label(pwd_frame, text="Nouveau mot de passe :", font=self.font_main, bg=self.theme["bg"], fg=self.theme["fg"]).pack(anchor="w", pady=2)
-        new_pwd = tk.Entry(pwd_frame, show="*", width=20)
-        new_pwd.pack(anchor="w", pady=2, padx=5)
-        tk.Label(pwd_frame, text="Confirmez :", font=self.font_main, bg=self.theme["bg"], fg=self.theme["fg"]).pack(anchor="w", pady=2)
-        conf_pwd = tk.Entry(pwd_frame, show="*", width=20)
-        conf_pwd.pack(anchor="w", pady=2, padx=5)
+        tk.Label(pwd_frame, text="Définir/modifier mot de passe de l'application :", font=self.font_main, bg=self.theme["bg"], fg=self.theme["button_fg"]).pack(anchor="w", pady=5)
+        sub_pwd_frame = tk.Frame(pwd_frame, bg=self.theme["bg"])
+        sub_pwd_frame.pack(pady=5)
+        tk.Label(sub_pwd_frame, text="Mot de passe actuel :", font=self.font_main, bg=self.theme["bg"], fg=self.theme["button_fg"]).grid(row=0, column=0, padx=5, pady=2, sticky="e")
+        current_pwd = tk.Entry(sub_pwd_frame, show="*", width=20)
+        current_pwd.grid(row=0, column=1, padx=5, pady=2)
+        tk.Label(sub_pwd_frame, text="Nouveau mot de passe :", font=self.font_main, bg=self.theme["bg"], fg=self.theme["button_fg"]).grid(row=1, column=0, padx=5, pady=2, sticky="e")
+        new_pwd = tk.Entry(sub_pwd_frame, show="*", width=20)
+        new_pwd.grid(row=1, column=1, padx=5, pady=2)
+        tk.Label(sub_pwd_frame, text="Confirmez :", font=self.font_main, bg=self.theme["bg"], fg=self.theme["button_fg"]).grid(row=2, column=0, padx=5, pady=2, sticky="e")
+        conf_pwd = tk.Entry(sub_pwd_frame, show="*", width=20)
+        conf_pwd.grid(row=2, column=1, padx=5, pady=2)
+    
+        def prompt_default_rdp():
+            if messagebox.askyesno("Application par défaut", t("default_rdp_label"), parent=top):
+                with open(DEFAULT_RDP_FILE, "w", encoding="utf-8") as f:
+                    f.write("yes")
+                subprocess.call(["xdg-mime", "default", "SwiftRDP.desktop", "x-scheme-handler/rdp"])
+                messagebox.showinfo(t("info"), "SwiftRDP est désormais défini comme application RDP par défaut.", parent=top)
+            else:
+                with open(DEFAULT_RDP_FILE, "w", encoding="utf-8") as f:
+                    f.write("no")
+        tk.Button(top, text=t("default_rdp_label"), command=prompt_default_rdp, font=self.font_main,
+                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=35).pack(pady=10)
     
         def save_preferences():
             global CURRENT_LANG, CURRENT_THEME
@@ -1234,7 +1242,6 @@ class RDPApp(tk.Tk):
                 else:
                     if os.path.exists(PASSWORD_FILE):
                         os.remove(PASSWORD_FILE)
-            # Sauvegarde des préférences langue et thème
             new_lang = lang_var.get()
             new_theme = theme_var.get()
             changed = (new_lang != CURRENT_LANG) or (new_theme != CURRENT_THEME)
@@ -1256,7 +1263,6 @@ class RDPApp(tk.Tk):
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(pady=10)
     
     def set_app_password(self):
-        # Maintenant géré dans Préférences
         messagebox.showinfo("Info", "Le changement de mot de passe se fait dans l'onglet Préférences.", parent=self)
     
     def save_configuration(self):
@@ -1308,7 +1314,7 @@ class RDPApp(tk.Tk):
             progress_win.geometry("400x100")
             progress_win.configure(bg=self.theme["bg"])
             tk.Label(progress_win, text="Redémarrage en cours...", font=self.font_main,
-                     bg=self.theme["bg"], fg=self.theme["fg"]).pack(pady=10)
+                     bg=self.theme["bg"], fg=self.theme["button_fg"]).pack(pady=10)
             pb = ttk.Progressbar(progress_win, mode="determinate", maximum=100)
             pb.pack(fill=tk.X, padx=20, pady=10)
             for i in range(101):
@@ -1334,8 +1340,8 @@ class RDPApp(tk.Tk):
         top.geometry("600x350")
         top.configure(bg=self.theme["bg"])
         tk.Label(top, text=f"{t('note_for')} {row[0]}:", font=("Segoe Script", 12),
-                 bg=self.theme["bg"], fg=self.theme["fg"]).pack(pady=10)
-        text = tk.Text(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["fg"],
+                 bg=self.theme["bg"], fg=self.theme["button_fg"]).pack(pady=10)
+        text = tk.Text(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"],
                         wrap=tk.WORD, height=10, width=70, relief="flat")
         text.insert(tk.END, row[4])
         text.pack(padx=20, pady=10, fill=tk.BOTH, expand=True)
