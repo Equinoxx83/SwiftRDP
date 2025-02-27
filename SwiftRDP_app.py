@@ -38,7 +38,6 @@ PATCH_NOTE_FLAG   = os.path.join(PROJECT_DIR, "PATCH_NOTE_PENDING")
 def hash_password(password):
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
-# Boîte de dialogue personnalisée pour demander un mot de passe (utilisée dans Préférences)
 def ask_password_custom(parent, title, prompt):
     dlg = tk.Toplevel(parent)
     dlg.title(title)
@@ -72,7 +71,6 @@ def check_password(parent):
             return False
     return True
 
-# Pour forcer une fenêtre modale et la placer toujours au-dessus
 def make_modal(win, parent):
     win.transient(parent)
     win.grab_set()
@@ -82,7 +80,6 @@ def make_modal(win, parent):
 ######################################
 # Gestion de la single instance via socket
 ######################################
-# Avant de lancer l'appli, on essaie de se connecter sur le port 50000.
 def send_instance_message():
     try:
         client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -95,11 +92,9 @@ def send_instance_message():
     except Exception:
         return False
 
-# Si une instance est déjà ouverte, on envoie le lien (s'il y en a) et on quitte.
 if send_instance_message():
     sys.exit(0)
 
-# Socket listener pour recevoir les liens rdp:// dans l'instance principale
 def socket_listener(app):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.bind(("127.0.0.1", 50000))
@@ -112,9 +107,7 @@ def socket_listener(app):
             print("Message reçu via socket :", data)
             if data.startswith("rdp://"):
                 ip = data[len("rdp://"):]
-                # Lancer une nouvelle instance avec le lien RDP en argument
                 subprocess.Popen(["/bin/bash", os.path.join(PROJECT_DIR, "SwiftRDP.sh"), f"rdp://{ip}"])
-                # Fermer l'instance actuelle après un délai court
                 app.after(200, app.destroy)
             conn.close()
         except Exception as e:
@@ -620,6 +613,8 @@ class RDPApp(tk.Tk):
         if os.path.exists(PATCH_NOTE_FLAG):
             self.after(2000, lambda: self.show_patch_note_dialog(read_patch_note()))
             os.remove(PATCH_NOTE_FLAG)
+        # Vérification de mise à jour au lancement (ajoutée ici)
+        self.after(2000, lambda: check_for_update(self))
     
     def prompt_rdp_connection(self, ip):
         login = simpledialog.askstring("Login", "Entrez votre login :", parent=self)
@@ -1224,7 +1219,6 @@ class RDPApp(tk.Tk):
     
         def save_preferences():
             global CURRENT_LANG, CURRENT_THEME
-            # Traitement du mot de passe
             if current_pwd.get().strip() or new_pwd.get().strip() or conf_pwd.get().strip():
                 if os.path.exists(PASSWORD_FILE):
                     with open(PASSWORD_FILE, "r", encoding="utf-8") as f:
@@ -1313,7 +1307,7 @@ class RDPApp(tk.Tk):
             progress_win.title(t("update_complete"))
             progress_win.geometry("400x100")
             progress_win.configure(bg=self.theme["bg"])
-            tk.Label(progress_win, text="Redémarrage en cours...", font=self.font_main,
+            tk.Label(progress_win, text="Mise à jour en cours...", font=self.font_main,
                      bg=self.theme["bg"], fg=self.theme["button_fg"]).pack(pady=10)
             pb = ttk.Progressbar(progress_win, mode="determinate", maximum=100)
             pb.pack(fill=tk.X, padx=20, pady=10)
