@@ -203,7 +203,7 @@ translations = {
          "no_update_available": "Aucune mise à jour disponible.",
          "update_failed": "La mise à jour a échoué",
          "update_complete": "Mise à jour et redémarrage.",
-         "progress_win": "Mise à jour en cours...",
+         "update_in_progress_t": "Mise à jour en cours...",
          "select_connection": "Veuillez sélectionner une connexion.",
          "delete_connection": "Supprimer la connexion",
          "connection_deleted": "Connexion supprimée.",
@@ -288,7 +288,7 @@ translations = {
          "no_update_available": "No update available.",
          "update_failed": "Update failed",
          "update_complete": "Update and restart.",
-         "progress_win": "Update in progress...",
+         "update_in_progress_t": "Update in progress...",
          "select_connection": "Please select a connection.",
          "delete_connection": "Delete connection",
          "connection_deleted": "Connection deleted.",
@@ -578,7 +578,7 @@ def update_app(app, repo_url, remote_version):
         progress_win.title(t("update_complete"))
         progress_win.geometry("400x100")
         progress_win.configure(bg=app.theme["bg"])
-        tk.Label(progress_win, text="Mise à jour en cours...", font=app.font_main,
+        tk.Label(progress_win, text=t("update_in_progress_t"), font=app.font_main,
                  bg=app.theme["bg"], fg=app.theme["fg"]).pack(pady=10)
         pb = ttk.Progressbar(progress_win, mode="determinate", maximum=100)
         pb.pack(fill=tk.X, padx=20, pady=10)
@@ -1309,7 +1309,7 @@ class RDPApp(tk.Tk):
             progress_win.title(t("update_complete"))
             progress_win.geometry("400x100")
             progress_win.configure(bg=self.theme["bg"])
-            tk.Label(progress_win, text="Mise à jour en cours...", font=self.font_main,
+            tk.Label(progress_win, text=t("update_in_progress_t"), font=self.font_main,
                      bg=self.theme["bg"], fg=self.theme["button_fg"]).pack(pady=10)
             pb = ttk.Progressbar(progress_win, mode="determinate", maximum=100)
             pb.pack(fill=tk.X, padx=20, pady=10)
