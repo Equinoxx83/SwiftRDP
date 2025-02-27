@@ -675,9 +675,9 @@ class RDPApp(tk.Tk):
                              style="grey.Horizontal.TProgressbar")
         pb.pack(fill=tk.X, padx=20, pady=10)
         def update_progress(count=0):
-            if count <= 100:
+            if count <= 150:
                 pb['value'] = count
-                self.after(100, update_progress, count+1)
+                self.after(135, update_progress, count+1)
             else:
                 progress_win.destroy()
         update_progress()
