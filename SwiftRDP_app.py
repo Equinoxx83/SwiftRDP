@@ -136,7 +136,7 @@ if not os.path.exists(DEFAULT_RDP_FILE) or not open(DEFAULT_RDP_FILE, "r", encod
         try:
             with open(DEFAULT_RDP_FILE, "w", encoding="utf-8") as f:
                 f.write("yes")
-            subprocess.call(["xdg-mime", "default", "SwiftRDP.desktop", "x-scheme-handler/rdp"])
+            subprocess.call(["sudo", "xdg-mime", "default", "SwiftRDP.desktop", "x-scheme-handler/rdp"])
         except Exception as e:
             messagebox.showerror("Erreur", f"Erreur lors de la configuration RDP par défaut : {e}")
     else:
