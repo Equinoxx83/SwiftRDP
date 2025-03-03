@@ -11,9 +11,23 @@ from functools import partial
 PROJECT_DIR = "/opt/SwiftRDP"  # Fichiers du projet
 CONFIG_DIR  = "/usr/local/share/appdata/.SwiftRDP"  # Fichiers de configuration
 
+# Si le dossier CONFIG_DIR n'existe pas, on le crée et on corrige ses droits
 if not os.path.exists(CONFIG_DIR):
     os.makedirs(CONFIG_DIR, exist_ok=True)
     subprocess.call(["sudo", "chown", "-R", f"{os.environ.get('USER')}:{os.environ.get('USER')}", CONFIG_DIR])
+
+# Fonction de vérification et correction des droits sur CONFIG_DIR
+def check_and_fix_permissions():
+    if not os.access(CONFIG_DIR, os.W_OK):
+        try:
+            subprocess.check_call(["sudo", "chown", "-R", f"{os.environ.get('USER')}:{os.environ.get('USER')}", CONFIG_DIR])
+        except Exception as e:
+            messagebox.showerror("Erreur de permissions", 
+                "Impossible de modifier les droits sur le dossier de configuration.\n"
+                "Veuillez lancer l'application en sudo ou vérifier les permissions manuellement.")
+            sys.exit(1)
+
+check_and_fix_permissions()
 
 # Chemins de configuration (dans CONFIG_DIR)
 LANGUAGE_FILE     = os.path.join(CONFIG_DIR, "language.conf")
@@ -119,16 +133,22 @@ def socket_listener(app):
 ######################################
 if not os.path.exists(DEFAULT_RDP_FILE) or not open(DEFAULT_RDP_FILE, "r", encoding="utf-8").read().strip():
     if messagebox.askyesno("Application par défaut", "Voulez-vous définir SwiftRDP comme application par défaut pour les liens rdp:// ?"):
-        with open(DEFAULT_RDP_FILE, "w", encoding="utf-8") as f:
-            f.write("yes")
-        subprocess.call(["xdg-mime", "default", "SwiftRDP.desktop", "x-scheme-handler/rdp"])
+        try:
+            with open(DEFAULT_RDP_FILE, "w", encoding="utf-8") as f:
+                f.write("yes")
+            subprocess.call(["xdg-mime", "default", "SwiftRDP.desktop", "x-scheme-handler/rdp"])
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Erreur lors de la configuration RDP par défaut : {e}")
     else:
         with open(DEFAULT_RDP_FILE, "w", encoding="utf-8") as f:
             f.write("no")
 else:
     DEFAULT_RDP = open(DEFAULT_RDP_FILE, "r", encoding="utf-8").read().strip().lower() == "yes"
     if DEFAULT_RDP:
-        subprocess.call(["xdg-mime", "default", "SwiftRDP.desktop", "x-scheme-handler/rdp"])
+        try:
+            subprocess.call(["xdg-mime", "default", "SwiftRDP.desktop", "x-scheme-handler/rdp"])
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Erreur lors de la configuration RDP par défaut : {e}")
 
 ######################################
 # Chargement de la configuration (langue, thème, mode d'affichage)
@@ -193,7 +213,7 @@ translations = {
          "warning": "Avertissement",
          "info": "Info",
          "confirm": "Confirmer",
-         "all_fields_required": "Tous les champs (sauf note) doivent être remplis.",
+         "all_fields_required": "Tous les champs (sauf note, sauf groupe) doivent être remplis.",
          "error_duplicate_name": "Le nom '{name}' existe déjà. Veuillez en choisir un autre.",
          "warning_duplicate_ip": "L'IP '{ip}' est déjà enregistrée. Voulez-vous continuer ?",
          "connection_added": "Connexion ajoutée.",
@@ -278,7 +298,7 @@ translations = {
          "warning": "Warning",
          "info": "Info",
          "confirm": "Confirm",
-         "all_fields_required": "All fields (except note) are required.",
+         "all_fields_required": "Name, IP and login are required.",
          "error_duplicate_name": "The name '{name}' already exists. Please choose another.",
          "warning_duplicate_ip": "The IP '{ip}' already exists. Do you want to continue?",
          "connection_added": "Connection added.",
@@ -615,14 +635,14 @@ class RDPApp(tk.Tk):
         if os.path.exists(PATCH_NOTE_FLAG):
             self.after(2000, lambda: self.show_patch_note_dialog(read_patch_note()))
             os.remove(PATCH_NOTE_FLAG)
-        # Vérification de mise à jour au lancement (ajoutée ici)
+        # Vérification de mise à jour au lancement
         self.after(2000, lambda: check_for_update(self))
     
     def prompt_rdp_connection(self, ip):
         login = simpledialog.askstring("Login", "Entrez votre login :", parent=self)
         pwd = simpledialog.askstring("Mot de passe", "Entrez votre mot de passe :", show="*", parent=self)
         if login and pwd:
-            row = [ip, ip, login, "N/A", "", ""]
+            row = [ip, ip, login, "N/A", "", ""]  # le groupe peut rester vide
             self.connect_connection(row, pwd_provided=pwd)
         else:
             messagebox.showerror("Erreur", "Login ou mot de passe non fourni.", parent=self)
@@ -678,7 +698,7 @@ class RDPApp(tk.Tk):
             if progress_win.winfo_exists():
                 if count <= 100:
                     pb['value'] = count
-                    self.after(140, update_progress, count+1)  # 150 ms * 100 ≈ 15 sec
+                    self.after(140, update_progress, count+1)  # 140ms * 100 ≈ 14 sec (ajustable pour 15 sec)
                 else:
                     try:
                         progress_win.destroy()
@@ -874,7 +894,7 @@ class RDPApp(tk.Tk):
         login = simpledialog.askstring("Login", "Entrez votre login :", parent=self)
         pwd = simpledialog.askstring("Mot de passe", "Entrez votre mot de passe :", show="*", parent=self)
         if login and pwd:
-            row = [ip, ip, login, "N/A", "", ""]
+            row = [ip, ip, login, "N/A", "", ""]  # Le groupe reste optionnel
             self.connect_connection(row, pwd_provided=pwd)
         else:
             messagebox.showerror("Erreur", "Login ou mot de passe non fourni.", parent=self)
@@ -900,14 +920,13 @@ class RDPApp(tk.Tk):
         e_login.grid(row=2, column=1, padx=15, pady=8, sticky="w")
         tk.Label(top, text=t("group"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"]).grid(row=3, column=0, padx=15, pady=8, sticky="e")
         existing_groups = get_existing_groups()
-        group_var = tk.StringVar()
+        group_var = tk.StringVar()  # Ne pré-remplit pas par défaut
         group_options = existing_groups if existing_groups else []
         group_frame = tk.Frame(top, bg=self.theme["bg"])
         group_frame.grid(row=3, column=1, padx=15, pady=8, sticky="w")
         group_cb = ttk.Combobox(group_frame, textvariable=group_var, values=group_options, font=("Segoe Script", 12), width=45, state="readonly")
         group_cb.grid(row=0, column=0, sticky="w")
-        if group_options:
-            group_cb.set(group_options[0])
+        # On ne fixe pas de groupe par défaut pour laisser le choix à l'utilisateur
         app = self
         plus_btn = tk.Button(group_frame, text="+", command=lambda: app.add_group(top, group_cb, group_var),
                               font=("Segoe Script", 10), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=1)
@@ -951,8 +970,9 @@ class RDPApp(tk.Tk):
         name_val = e_name.get().strip()
         ip_val = e_ip.get().strip()
         login_val = e_login.get().strip()
+        # Le groupe n'est plus obligatoire : on laisse group_val vide si l'utilisateur ne le renseigne pas
         group_val = group_var.get().strip()
-        if not name_val or not ip_val or not login_val or not group_val:
+        if not name_val or not ip_val or not login_val:
             messagebox.showerror(t("error"), t("all_fields_required"), parent=top)
             return
         for r in load_connections():
@@ -1000,8 +1020,7 @@ class RDPApp(tk.Tk):
         group_frame.grid(row=3, column=1, padx=15, pady=8, sticky="w")
         group_cb = ttk.Combobox(group_frame, textvariable=group_var, values=group_options, font=("Segoe Script", 12), width=45, state="readonly")
         group_cb.grid(row=0, column=0, sticky="w")
-        if original_row[5] in group_options:
-            group_cb.set(original_row[5])
+        # On ne force pas de sélection par défaut pour ne pas imposer un groupe
         app = self
         plus_btn = tk.Button(group_frame, text="+", command=lambda: app.add_group(top, group_cb, group_var),
                               font=("Segoe Script", 10), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=1)
