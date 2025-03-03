@@ -675,11 +675,15 @@ class RDPApp(tk.Tk):
                              style="grey.Horizontal.TProgressbar")
         pb.pack(fill=tk.X, padx=20, pady=10)
         def update_progress(count=0):
-            if count <= 100:
-                pb['value'] = count
-                self.after(150, update_progress, count+1)
-            else:
-                progress_win.destroy()
+            if progress_win.winfo_exists():
+                if count <= 100:
+                    pb['value'] = count
+                    self.after(140, update_progress, count+1)  # 150 ms * 100 ≈ 15 sec
+                else:
+                    try:
+                        progress_win.destroy()
+                    except Exception:
+                        pass
         update_progress()
         def check_window():
             found = False
@@ -688,17 +692,10 @@ class RDPApp(tk.Tk):
                     output = subprocess.check_output(["wmctrl", "-l"], text=True)
                 except Exception:
                     output = ""
-                # Vérifier si la fenêtre RDP est présente
                 if f"swiftrdp: {row[1].lower()}" in output.lower():
                     found = True
                     break
-                # Sinon, si après 5 secondes le processus est toujours actif, considérer la connexion comme établie
-                if time.time() - start_time > 5 and rdp_proc.poll() is None:
-                    found = True
-                    break
-                time.sleep(1)
-            if time.time() - start_time < 2:
-                time.sleep(2 - (time.time() - start_time))
+                time.sleep(0.5)
             try:
                 progress_win.destroy()
             except Exception:
