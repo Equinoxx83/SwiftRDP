@@ -11,12 +11,11 @@ from functools import partial
 PROJECT_DIR = "/opt/SwiftRDP"  # Fichiers du projet
 CONFIG_DIR  = "/usr/local/share/appdata/.SwiftRDP"  # Fichiers de configuration
 
-# Si le dossier CONFIG_DIR n'existe pas, on le crée et on corrige ses droits
 if not os.path.exists(CONFIG_DIR):
     os.makedirs(CONFIG_DIR, exist_ok=True)
     subprocess.call(["sudo", "chown", "-R", f"{os.environ.get('USER')}:{os.environ.get('USER')}", CONFIG_DIR])
 
-# Fonction de vérification et correction des droits sur CONFIG_DIR
+# Vérification et correction des droits sur CONFIG_DIR
 def check_and_fix_permissions():
     if not os.access(CONFIG_DIR, os.W_OK):
         try:
@@ -29,7 +28,7 @@ def check_and_fix_permissions():
 
 check_and_fix_permissions()
 
-# Chemins de configuration (dans CONFIG_DIR)
+# Chemins de configuration
 LANGUAGE_FILE     = os.path.join(CONFIG_DIR, "language.conf")
 THEME_FILE        = os.path.join(CONFIG_DIR, "theme.conf")
 FILE_CONNS        = os.path.join(CONFIG_DIR, "connexions.txt")
@@ -37,9 +36,9 @@ GROUPS_FILE       = os.path.join(CONFIG_DIR, "groups.txt")
 PASSWORD_FILE     = os.path.join(CONFIG_DIR, "password.conf")
 SHORTCUTS_FILE    = os.path.join(CONFIG_DIR, "shortcuts.conf")
 DISPLAY_MODE_FILE = os.path.join(CONFIG_DIR, "display_mode.conf")
-DEFAULT_RDP_FILE  = os.path.join(CONFIG_DIR, "default_rdp.conf")  # Contiendra "yes" ou "no"
+DEFAULT_RDP_FILE  = os.path.join(CONFIG_DIR, "default_rdp.conf")  # "yes" ou "no"
 
-# Fichiers du projet (dans PROJECT_DIR)
+# Fichiers du projet
 CHANGELOG_FILE    = os.path.join(PROJECT_DIR, "CHANGELOG")
 CHANGELOG_HIDE    = os.path.join(PROJECT_DIR, "CHANGELOGHIDE")
 VERSION_FILE      = os.path.join(PROJECT_DIR, "version.txt")
@@ -151,7 +150,7 @@ else:
             messagebox.showerror("Erreur", f"Erreur lors de la configuration RDP par défaut : {e}")
 
 ######################################
-# Chargement de la configuration (langue, thème, mode d'affichage)
+# Chargement de la configuration
 ######################################
 if os.path.exists(LANGUAGE_FILE):
     with open(LANGUAGE_FILE, "r", encoding="utf-8") as f:
@@ -181,13 +180,14 @@ def get_theme():
              "tree_fg": "#000000"
          }
     else:
+         # Pour le thème sombre, nous utilisons ici les valeurs d'origine
          return {
              "bg": "#2b2b2b",
              "fg": "#ffffff",
              "entry_bg": "#3a3a3a",
              "button_bg": "#3a3a3a",
              "button_fg": "#ffffff",
-             "tree_bg": "#2b2b2b",
+             "tree_bg": "#1b1b1b",  # Ancienne valeur pour le fond du Treeview en sombre
              "tree_fg": "#c0c0c0"
          }
 
@@ -516,25 +516,56 @@ def read_patch_note():
     return t("patch_note_empty")
 
 ######################################
-# Fonction pour switcher entre fenêtres (Ctrl+1 à Ctrl+9)
+# Arborescence et menu contextuel
 ######################################
-def switch_to_window(n):
-    try:
-        output = subprocess.check_output(["wmctrl", "-l"], text=True)
-    except Exception:
-        return
-    windows = []
-    for line in output.splitlines():
-        if "swiftrdp:" in line.lower():
-            parts = line.split()
-            if parts:
-                windows.append(parts[0])
-    windows.sort()
-    if 0 <= n-1 < len(windows):
-        subprocess.call(["wmctrl", "-i", "-a", windows[n-1]])
+def show_context_menu(app, event):
+    iid = app.tree.identify_row(event.y)
+    if iid:
+        app.tree.selection_set(iid)
+        item = app.tree.item(iid)
+        # Si l'item possède des valeurs, il s'agit d'une connexion (et non d'un groupe)
+        if item.get("values"):
+            menu = tk.Menu(app, tearoff=0)
+            menu.add_command(label="Se connecter", command=lambda: app.connect_connection(item["values"]))
+            menu.add_command(label="Modifier", command=app.action_modify)
+            menu.add_command(label="Supprimer", command=app.action_delete)
+            menu.add_command(label="Modifier la note", command=app.action_view_note)
+            menu.tk_popup(event.x_root, event.y_root)
+    else:
+        pass
+
+# refresh_table() pour créer une arborescence par groupe
+def refresh_table(app):
+    for i in app.tree.get_children():
+        app.tree.delete(i)
+    data = load_connections()
+    filter_text = app.search_var.get().lower()
+    if filter_text:
+        data = [row for row in data if any(filter_text in str(field).lower() for field in row)]
+    groups = {}
+    for row in data:
+        grp = row[5] if row[5] else "Sans groupe"
+        groups.setdefault(grp, []).append(row)
+    for grp, rows in groups.items():
+        parent_id = app.tree.insert("", "end", text=grp, open=True)
+        for row in rows:
+            app.tree.insert(parent_id, "end", text=row[0], values=(row[1], row[2], row[3], format_note(row[4])))
 
 ######################################
-# Fonctions pour la mise à jour (barre de progression)
+# Fonction de double-clic
+######################################
+def on_double_click(self, event):
+    # Détecte sur quelle colonne on a cliqué
+    col = self.tree.identify_column(event.x)
+    if col == "#4":  # La colonne 4 correspond à la note
+        self.action_view_note()
+    else:
+        row = self.get_selected_row()
+        if row:
+            self.connect_connection(row)
+
+######################################
+# Fonctions pour la mise à jour
 ######################################
 def check_for_update(app, from_menu=False):
     repo_url = "https://github.com/Equinoxx83/SwiftRDP.git"
@@ -629,20 +660,22 @@ class RDPApp(tk.Tk):
         self.font_heading = ("Segoe Script", 12)
         self.create_widgets()
         self.refresh_table()
+        # Liaison du clic droit pour le menu contextuel
+        self.tree.bind("<Button-3>", lambda event: show_context_menu(self, event))
+        self.tree.bind("<Double-1>", on_double_click.__get__(self))
         threading.Thread(target=socket_listener, args=(self,), daemon=True).start()
         for i in range(1, 10):
             self.bind_all(f"<Control-Key-{i}>", lambda event, n=i: switch_to_window(n))
         if os.path.exists(PATCH_NOTE_FLAG):
             self.after(2000, lambda: self.show_patch_note_dialog(read_patch_note()))
             os.remove(PATCH_NOTE_FLAG)
-        # Vérification de mise à jour au lancement
         self.after(2000, lambda: check_for_update(self))
     
     def prompt_rdp_connection(self, ip):
         login = simpledialog.askstring("Login", "Entrez votre login :", parent=self)
         pwd = simpledialog.askstring("Mot de passe", "Entrez votre mot de passe :", show="*", parent=self)
         if login and pwd:
-            row = [ip, ip, login, "N/A", "", ""]  # le groupe peut rester vide
+            row = [ip, ip, login, "N/A", "", ""]  # le groupe reste optionnel
             self.connect_connection(row, pwd_provided=pwd)
         else:
             messagebox.showerror("Erreur", "Login ou mot de passe non fourni.", parent=self)
@@ -698,7 +731,7 @@ class RDPApp(tk.Tk):
             if progress_win.winfo_exists():
                 if count <= 100:
                     pb['value'] = count
-                    self.after(140, update_progress, count+1)  # 140ms * 100 ≈ 14 sec (ajustable pour 15 sec)
+                    self.after(140, update_progress, count+1)  # environ 15 sec
                 else:
                     try:
                         progress_win.destroy()
@@ -771,6 +804,7 @@ class RDPApp(tk.Tk):
             combobox["values"] = groups
             var.set(new_grp)
     
+    # Création de l'arborescence par groupe dans le Treeview
     def create_widgets(self):
         self.theme = get_theme()
         search_frame = tk.Frame(self, bg=self.theme["bg"])
@@ -780,20 +814,29 @@ class RDPApp(tk.Tk):
         self.search_var.trace("w", lambda *args: self.refresh_table())
         tk.Entry(search_frame, textvariable=self.search_var, font=self.font_main, bg=self.theme["entry_bg"],
                  fg=self.theme["fg"], insertbackground=self.theme["fg"], relief="flat").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
-        columns = (t("name").strip(":"), t("ip").strip(":"), t("login").strip(":"), t("last_connection"), t("add_note").strip(), t("group").strip(":"))
-        style = ttk.Style(self)
-        style.theme_use("clam")
-        style.configure("Treeview", background=self.theme["tree_bg"], fieldbackground=self.theme["tree_bg"],
-                        foreground=self.theme["tree_fg"], font=self.font_main, borderwidth=0)
-        heading_bg = "#e0e0e0" if CURRENT_THEME == "light" else "#1b1b1b"
-        style.configure("Treeview.Heading", font=self.font_heading, background=heading_bg,
-                        foreground=self.theme["fg"], relief="ridge", borderwidth=1)
-        self.tree = ttk.Treeview(self, columns=columns, show="headings", selectmode="browse")
-        for col, width in zip(columns, (300,150,150,200,300,150)):
-            self.tree.heading(col, text=col, command=partial(treeview_sort_column, self.tree, col, False))
-            self.tree.column(col, width=width, anchor="w")
+        # Utilisation d'un Treeview en mode "tree headings" pour l'arborescence
+        columns = ("IP", "Login", "Dernière connexion", "Note")
+        self.tree = ttk.Treeview(self, columns=columns, show="tree headings", selectmode="browse")
+        self.tree.heading("#0", text="Nom")
+        self.tree.column("#0", width=300)
+        self.tree.heading("IP", text="IP")
+        self.tree.column("IP", width=150)
+        self.tree.heading("Login", text="Login")
+        self.tree.column("Login", width=150)
+        self.tree.heading("Dernière connexion", text="Dernière connexion")
+        self.tree.column("Dernière connexion", width=200)
+        self.tree.heading("Note", text="Note")
+        self.tree.column("Note", width=300)
+        # Configuration du style pour le thème sombre (comme avant)
+        style = ttk.Style()
+        if CURRENT_THEME == "dark":
+            style.configure("Treeview", background="#2b2b2b", fieldbackground="#2b2b2b", foreground="#c0c0c0")
+            style.configure("Treeview.Heading", background="#1b1b1b", foreground="#ffffff")
+        else:
+            style.configure("Treeview", background="#ffffff", fieldbackground="#ffffff", foreground="#000000")
+            style.configure("Treeview.Heading", background="#e0e0e0", foreground="#000000")
         self.tree.pack(fill=tk.BOTH, expand=True, padx=15, pady=10)
-        self.tree.bind("<Double-1>", self.on_double_click)
+        # Les événements (double-clic et clic droit) sont liés dans __init__
         btn_frame = tk.Frame(self, bg=self.theme["bg"])
         btn_frame.pack(fill=tk.X, padx=15, pady=10)
         btn_texts = [t("connect"), t("add"), t("modify"), t("delete"), t("manage_groups"), t("options")]
@@ -804,18 +847,7 @@ class RDPApp(tk.Tk):
         for i in range(len(btn_texts)):
             btn_frame.grid_columnconfigure(i, weight=1)
     
-    def on_double_click(self, event):
-        col = self.tree.identify_column(event.x)
-        if col == "#5":
-            self.action_view_note()
-        else:
-            region = self.tree.identify("region", event.x, event.y)
-            if region == "heading":
-                return
-            row = self.get_selected_row()
-            if row:
-                self.connect_connection(row)
-    
+    # Redéfinition de refresh_table pour l'arborescence
     def refresh_table(self):
         for i in self.tree.get_children():
             self.tree.delete(i)
@@ -823,24 +855,29 @@ class RDPApp(tk.Tk):
         filter_text = self.search_var.get().lower()
         if filter_text:
             data = [row for row in data if any(filter_text in str(field).lower() for field in row)]
+        groups = {}
         for row in data:
-            display_row = row.copy()
-            display_row[4] = format_note(row[4])
-            self.tree.insert("", tk.END, values=display_row)
-        for col in self.tree["columns"]:
-            self.tree.heading(col, command=partial(treeview_sort_column, self.tree, col, False))
+            grp = row[5] if row[5] else "Sans groupe"
+            groups.setdefault(grp, []).append(row)
+        for grp, rows in groups.items():
+            parent_id = self.tree.insert("", "end", text=grp, open=True)
+            for row in rows:
+                self.tree.insert(parent_id, "end", text=row[0], values=(row[1], row[2], row[3], format_note(row[4])))
     
     def get_selected_row(self):
         sel = self.tree.selection()
         if not sel:
             messagebox.showinfo(t("info"), t("select_connection"), parent=self)
             return None
-        full_data = load_connections()
-        selected = self.tree.item(sel[0])["values"]
-        for row in full_data:
-            if row[0] == selected[0] and row[5] == selected[5]:
-                return row
-        return selected
+        item = self.tree.item(sel[0])
+        if item.get("values"):
+            full_data = load_connections()
+            for row in full_data:
+                if row[0] == item["text"]:
+                    return row
+        else:
+            messagebox.showinfo(t("info"), "Veuillez sélectionner une connexion (pas un groupe).", parent=self)
+            return None
     
     def action_connect(self):
         row = self.get_selected_row()
@@ -920,13 +957,12 @@ class RDPApp(tk.Tk):
         e_login.grid(row=2, column=1, padx=15, pady=8, sticky="w")
         tk.Label(top, text=t("group"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"]).grid(row=3, column=0, padx=15, pady=8, sticky="e")
         existing_groups = get_existing_groups()
-        group_var = tk.StringVar()  # Ne pré-remplit pas par défaut
+        group_var = tk.StringVar()  # Pas de pré-remplissage
         group_options = existing_groups if existing_groups else []
         group_frame = tk.Frame(top, bg=self.theme["bg"])
         group_frame.grid(row=3, column=1, padx=15, pady=8, sticky="w")
         group_cb = ttk.Combobox(group_frame, textvariable=group_var, values=group_options, font=("Segoe Script", 12), width=45, state="readonly")
         group_cb.grid(row=0, column=0, sticky="w")
-        # On ne fixe pas de groupe par défaut pour laisser le choix à l'utilisateur
         app = self
         plus_btn = tk.Button(group_frame, text="+", command=lambda: app.add_group(top, group_cb, group_var),
                               font=("Segoe Script", 10), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=1)
@@ -970,8 +1006,7 @@ class RDPApp(tk.Tk):
         name_val = e_name.get().strip()
         ip_val = e_ip.get().strip()
         login_val = e_login.get().strip()
-        # Le groupe n'est plus obligatoire : on laisse group_val vide si l'utilisateur ne le renseigne pas
-        group_val = group_var.get().strip()
+        group_val = group_var.get().strip()  # Optionnel
         if not name_val or not ip_val or not login_val:
             messagebox.showerror(t("error"), t("all_fields_required"), parent=top)
             return
@@ -1020,7 +1055,6 @@ class RDPApp(tk.Tk):
         group_frame.grid(row=3, column=1, padx=15, pady=8, sticky="w")
         group_cb = ttk.Combobox(group_frame, textvariable=group_var, values=group_options, font=("Segoe Script", 12), width=45, state="readonly")
         group_cb.grid(row=0, column=0, sticky="w")
-        # On ne force pas de sélection par défaut pour ne pas imposer un groupe
         app = self
         plus_btn = tk.Button(group_frame, text="+", command=lambda: app.add_group(top, group_cb, group_var),
                               font=("Segoe Script", 10), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=1)
