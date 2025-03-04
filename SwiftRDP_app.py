@@ -146,7 +146,7 @@ else:
     DEFAULT_RDP = open(DEFAULT_RDP_FILE, "r", encoding="utf-8").read().strip().lower() == "yes"
     if DEFAULT_RDP:
         try:
-            subprocess.call(["xdg-mime", "default", "SwiftRDP.desktop", "x-scheme-handler/rdp"])
+            subprocess.call(["sudo", "xdg-mime", "default", "SwiftRDP.desktop", "x-scheme-handler/rdp"])
         except Exception as e:
             messagebox.showerror("Erreur", f"Erreur lors de la configuration RDP par défaut : {e}")
 
@@ -715,7 +715,7 @@ class RDPApp(tk.Tk):
                 if f"swiftrdp: {row[1].lower()}" in output.lower():
                     found = True
                     break
-                time.sleep(0.5)
+                time.sleep(0.1)
             try:
                 progress_win.destroy()
             except Exception:
