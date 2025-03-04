@@ -1,8 +1,4 @@
-- Changed the path of the configuration files folder (now in /usr/local/share/appdata/.SwiftRDP)
-- Added/modified password for launching the SwiftRDP application
-- Added a default application feature for example when trying to launch from a browser an rdp://IP
-- SwiftRDP added the name in the launch of the RDP window
-- Fixed the translation of some buttons
-- Fixed and improved some menu resolutions
-- Fixed bug for Défault application SwiftRDP
-- Added loading screen when update of SwiftRDP
+- Added treeview by groups
+- Added context menu
+- Fix double click on note for check / modify
+- Fix false error when connecting
