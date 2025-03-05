@@ -5,23 +5,215 @@ import subprocess, os, zipfile, shutil, tempfile, threading, time, webbrowser, s
 from datetime import datetime
 from functools import partial
 
+# Seuil pour considérer un double-clic rapide (en millisecondes)
+DOUBLE_CLICK_THRESHOLD = 250
+
 ######################################
-# Dossiers et chemins
+# Fonction de hashage du mot de passe
+######################################
+def hash_password(password):
+    return hashlib.sha256(password.encode('utf-8')).hexdigest()
+
+######################################
+# Traductions et fonction t
+######################################
+translations = {
+    "fr": {
+        "title": "SwiftRDP",
+        "search": "Recherche:",
+        "connect": "Se connecter",
+        "add": "Ajouter",
+        "modify": "Modifier",
+        "delete": "Supprimer",
+        "manage_groups": "Gérer Groupes",
+        "options": "Options",
+        "preferences": "Préférences",
+        "patch_note": "Notes de mise à jour",
+        "dont_show_again": "Ne plus afficher",
+        "view_patch_note": "Voir les notes de mise à jour",
+        "patch_note_empty": "Aucune note de mise à jour disponible.",
+        "error": "Erreur",
+        "warning": "Avertissement",
+        "info": "Info",
+        "confirm": "Confirmer",
+        "all_fields_required": "Tous les champs (sauf note, sauf groupe) doivent être remplis.",
+        "error_duplicate_name": "Le nom '{name}' existe déjà. Veuillez en choisir un autre.",
+        "warning_duplicate_ip": "L'IP '{ip}' est déjà enregistrée. Voulez-vous continuer ?",
+        "connection_added": "Connexion ajoutée.",
+        "connection_modified": "Connexion modifiée.",
+        "language_saved_restart": "La langue, le thème et les raccourcis ont été enregistrés.\nL'application va redémarrer automatiquement.",
+        "new_version_available": "Une nouvelle version est disponible. Voulez-vous mettre à jour SwiftRDP ?",
+        "no_update_available": "Aucune mise à jour disponible.",
+        "update_failed": "La mise à jour a échoué",
+        "update_complete": "Mise à jour et redémarrage.",
+        "update_in_progress_t": "Mise à jour en cours...",
+        "select_connection": "Veuillez sélectionner une connexion.",
+        "delete_connection": "Supprimer la connexion",
+        "connection_deleted": "Connexion supprimée.",
+        "note_full": "Note complète",
+        "note_for": "Note pour",
+        "password": "Mot de passe",
+        "enter_password_for": "Entrez le mot de passe pour",
+        "no_password": "Aucun mot de passe fourni.",
+        "launch_error": "Erreur lors du lancement de SwiftRDP",
+        "connecting": "Connexion en cours...",
+        "please_wait": "Connexion en cours, veuillez patienter...",
+        "connection_failed": "Connexion échouée",
+        "new_group": "Nouveau groupe",
+        "enter_new_group": "Entrez le nom du nouveau groupe:",
+        "add_connection_title": "Ajouter Connexion",
+        "modify_connection_title": "Modifier Connexion",
+        "add_note_title": "Ajouter une note",
+        "modify_note_title": "Modifier la note",
+        "name": "Nom:",
+        "ip": "IP:",
+        "login": "Login:",
+        "group": "Groupe:",
+        "last_connection": "Dernière connexion",
+        "return": "Retour",
+        "add_note": "Ajouter une note",
+        "manage_groups_title": "Gérer Groupes",
+        "add_group_option": "Ajouter Groupe",
+        "existing_groups": "Groupes existants:",
+        "select_group": "Veuillez sélectionner un groupe.",
+        "save_configuration_option": "Sauvegarder la configuration",
+        "export_configuration_option": "Exporter la configuration",
+        "import_configuration_option": "Importer la configuration",
+        "delete_configuration_option": "Supprimer la configuration",
+        "update_option": "Mettre à jour SwiftRDP",
+        "support_option": "Support",
+        "choose_backup_directory": "Choisissez le dossier de sauvegarde",
+        "choose_export_directory": "Choisissez le dossier d'exportation",
+        "select_import_file": "Sélectionnez le fichier de configuration à importer",
+        "configuration_saved": "Configuration sauvegardée dans : {path}",
+        "configuration_exported": "Configuration exportée dans : {path}",
+        "configuration_imported": "Configuration importée.",
+        "configuration_deleted": "Configuration supprimée.",
+        "language": "Langue:",
+        "theme": "Thème:",
+        "dark": "Sombre",
+        "light": "Clair",
+        "shortcuts": "Raccourcis",
+        "switch_shortcut": "Switcher entre connexions",
+        "set_password": "Définir/modifier mot de passe SwiftRDP",
+        "display_mode": "Mode d'affichage des connexions",
+        "fenetres": "Fenêtres séparées",
+        "onglets": "Onglets",
+        "default_rdp_label": "Définir comme application RDP par défaut",
+        "delete_all_connections": "Voulez-vous supprimer toutes les connexions ?",
+        "delete_all_groups": "Voulez-vous supprimer tous les groupes ?",
+        "save": "Enregistrer",
+        "about": "A propos"
+    },
+    "en": {
+        "title": "SwiftRDP",
+        "search": "Search:",
+        "connect": "Connect",
+        "add": "Add",
+        "modify": "Modify",
+        "delete": "Delete",
+        "manage_groups": "Manage Groups",
+        "options": "Options",
+        "preferences": "Preferences",
+        "patch_note": "Patch Notes",
+        "dont_show_again": "Don't show again",
+        "view_patch_note": "View Patch Notes",
+        "patch_note_empty": "No patch notes available.",
+        "error": "Error",
+        "warning": "Warning",
+        "info": "Info",
+        "confirm": "Confirm",
+        "all_fields_required": "Name, IP and login are required.",
+        "error_duplicate_name": "The name '{name}' already exists. Please choose another.",
+        "warning_duplicate_ip": "The IP '{ip}' already exists. Do you want to continue?",
+        "connection_added": "Connection added.",
+        "connection_modified": "Connection modified.",
+        "language_saved_restart": "Language, theme and shortcuts saved.\nThe application will restart automatically.",
+        "new_version_available": "A new version is available. Do you want to update SwiftRDP?",
+        "no_update_available": "No update available.",
+        "update_failed": "Update failed",
+        "update_complete": "Update and restart.",
+        "update_in_progress_t": "Update in progress...",
+        "select_connection": "Please select a connection.",
+        "delete_connection": "Delete connection",
+        "connection_deleted": "Connection deleted.",
+        "note_full": "Full Note",
+        "note_for": "Note for",
+        "password": "Password",
+        "enter_password_for": "Enter password for",
+        "no_password": "No password provided.",
+        "launch_error": "Error launching SwiftRDP",
+        "connecting": "Connecting...",
+        "please_wait": "Please wait while connecting...",
+        "connection_failed": "Connection failed",
+        "new_group": "New group",
+        "enter_new_group": "Enter the new group name:",
+        "add_connection_title": "Add Connection",
+        "modify_connection_title": "Modify Connection",
+        "add_note_title": "Add Note",
+        "modify_note_title": "Modify Note",
+        "name": "Name:",
+        "ip": "IP:",
+        "login": "Username:",
+        "group": "Group:",
+        "last_connection": "Last connection",
+        "return": "Back",
+        "add_note": "Add Note",
+        "manage_groups_title": "Manage Groups",
+        "add_group_option": "Add Group",
+        "existing_groups": "Existing groups:",
+        "select_group": "Please select a group.",
+        "save_configuration_option": "Save Configuration",
+        "export_configuration_option": "Export Configuration",
+        "import_configuration_option": "Import Configuration",
+        "delete_configuration_option": "Delete Configuration",
+        "update_option": "Update SwiftRDP",
+        "support_option": "Support",
+        "choose_backup_directory": "Choose backup directory",
+        "choose_export_directory": "Choose export directory",
+        "select_import_file": "Select configuration file to import",
+        "configuration_saved": "Configuration saved in: {path}",
+        "configuration_exported": "Configuration exported in: {path}",
+        "configuration_imported": "Configuration imported.",
+        "configuration_deleted": "Configuration deleted.",
+        "language": "Language:",
+        "theme": "Theme:",
+        "dark": "Dark",
+        "light": "Light",
+        "shortcuts": "Shortcuts",
+        "switch_shortcut": "Switch between connections",
+        "set_password": "Set/Change SwiftRDP Password",
+        "display_mode": "Connection display mode",
+        "fenetres": "Separate windows",
+        "onglets": "Tabs",
+        "default_rdp_label": "Set as default RDP application",
+        "delete_all_connections": "Do you want to delete all connections?",
+        "delete_all_groups": "Do you want to delete all groups?",
+        "save": "Save",
+        "about": "About"
+    }
+}
+
+def t(key, **kwargs):
+    text = translations.get(CURRENT_LANG, translations["fr"]).get(key, key)
+    return text.format(**kwargs)
+
+######################################
+# Dossiers, chemins et permissions
 ######################################
 PROJECT_DIR = "/opt/SwiftRDP"  # Fichiers du projet
-CONFIG_DIR  = "/usr/local/share/appdata/.SwiftRDP"  # Fichiers de configuration
+CONFIG_DIR = "/usr/local/share/appdata/.SwiftRDP"  # Fichiers de configuration
 
 if not os.path.exists(CONFIG_DIR):
     os.makedirs(CONFIG_DIR, exist_ok=True)
     subprocess.call(["sudo", "chown", "-R", f"{os.environ.get('USER')}:{os.environ.get('USER')}", CONFIG_DIR])
 
-# Vérification et correction des droits sur CONFIG_DIR
 def check_and_fix_permissions():
     if not os.access(CONFIG_DIR, os.W_OK):
         try:
             subprocess.check_call(["sudo", "chown", "-R", f"{os.environ.get('USER')}:{os.environ.get('USER')}", CONFIG_DIR])
         except Exception as e:
-            messagebox.showerror("Erreur de permissions", 
+            messagebox.showerror("Erreur de permissions",
                 "Impossible de modifier les droits sur le dossier de configuration.\n"
                 "Veuillez lancer l'application en sudo ou vérifier les permissions manuellement.")
             sys.exit(1)
@@ -29,103 +221,21 @@ def check_and_fix_permissions():
 check_and_fix_permissions()
 
 # Chemins de configuration
-LANGUAGE_FILE     = os.path.join(CONFIG_DIR, "language.conf")
-THEME_FILE        = os.path.join(CONFIG_DIR, "theme.conf")
-FILE_CONNS        = os.path.join(CONFIG_DIR, "connexions.txt")
-GROUPS_FILE       = os.path.join(CONFIG_DIR, "groups.txt")
-PASSWORD_FILE     = os.path.join(CONFIG_DIR, "password.conf")
-SHORTCUTS_FILE    = os.path.join(CONFIG_DIR, "shortcuts.conf")
+LANGUAGE_FILE = os.path.join(CONFIG_DIR, "language.conf")
+THEME_FILE = os.path.join(CONFIG_DIR, "theme.conf")
+FILE_CONNS = os.path.join(CONFIG_DIR, "connexions.txt")
+GROUPS_FILE = os.path.join(CONFIG_DIR, "groups.txt")
+PASSWORD_FILE = os.path.join(CONFIG_DIR, "password.conf")
+SHORTCUTS_FILE = os.path.join(CONFIG_DIR, "shortcuts.conf")
 DISPLAY_MODE_FILE = os.path.join(CONFIG_DIR, "display_mode.conf")
-DEFAULT_RDP_FILE  = os.path.join(CONFIG_DIR, "default_rdp.conf")  # "yes" ou "no"
+DEFAULT_RDP_FILE = os.path.join(CONFIG_DIR, "default_rdp.conf")
 
 # Fichiers du projet
-CHANGELOG_FILE    = os.path.join(PROJECT_DIR, "CHANGELOG")
-CHANGELOG_HIDE    = os.path.join(PROJECT_DIR, "CHANGELOGHIDE")
-VERSION_FILE      = os.path.join(PROJECT_DIR, "version.txt")
-ICON_FILE         = os.path.join(PROJECT_DIR, "icon.png")
-PATCH_NOTE_FLAG   = os.path.join(PROJECT_DIR, "PATCH_NOTE_PENDING")
-
-######################################
-# Fonctions utilitaires
-######################################
-def hash_password(password):
-    return hashlib.sha256(password.encode("utf-8")).hexdigest()
-
-def ask_password_custom(parent, title, prompt):
-    dlg = tk.Toplevel(parent)
-    dlg.title(title)
-    dlg.transient(parent)
-    dlg.grab_set()
-    dlg.attributes("-topmost", True)
-    dlg.focus_force()
-    tk.Label(dlg, text=prompt, font=parent.font_main).pack(padx=20, pady=10)
-    entry = tk.Entry(dlg, show="*")
-    entry.pack(padx=20, pady=10)
-    result = {"value": None}
-    def on_ok():
-        result["value"] = entry.get()
-        dlg.destroy()
-    def on_cancel():
-        dlg.destroy()
-    btn_frame = tk.Frame(dlg)
-    btn_frame.pack(pady=10)
-    tk.Button(btn_frame, text="OK", command=on_ok, font=parent.font_main).pack(side="left", padx=10)
-    tk.Button(btn_frame, text="Annuler", command=on_cancel, font=parent.font_main).pack(side="left", padx=10)
-    parent.wait_window(dlg)
-    return result["value"]
-
-def check_password(parent):
-    if os.path.exists(PASSWORD_FILE):
-        with open(PASSWORD_FILE, "r", encoding="utf-8") as f:
-            stored_hash = f.read().strip()
-        pwd = simpledialog.askstring("Mot de passe", "Entrez le mot de passe pour lancer SwiftRDP:", show="*", parent=parent)
-        if not pwd or hash_password(pwd) != stored_hash:
-            messagebox.showerror("Erreur", "Mot de passe incorrect.", parent=parent)
-            return False
-    return True
-
-def make_modal(win, parent):
-    win.transient(parent)
-    win.grab_set()
-    win.focus_force()
-    win.attributes("-topmost", True)
-
-######################################
-# Gestion de la single instance via socket
-######################################
-def send_instance_message():
-    try:
-        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        client.connect(("127.0.0.1", 50000))
-        if len(sys.argv) > 1:
-            msg = " ".join(sys.argv[1:])
-            client.sendall(msg.encode())
-        client.close()
-        return True
-    except Exception:
-        return False
-
-if send_instance_message():
-    sys.exit(0)
-
-def socket_listener(app):
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(("127.0.0.1", 50000))
-    s.listen(1)
-    print("Socket listener démarré sur le port 50000")
-    while True:
-        try:
-            conn, addr = s.accept()
-            data = conn.recv(1024).decode().strip()
-            print("Message reçu via socket :", data)
-            if data.startswith("rdp://"):
-                ip = data[len("rdp://"):]
-                subprocess.Popen(["/bin/bash", os.path.join(PROJECT_DIR, "SwiftRDP.sh"), f"rdp://{ip}"])
-                app.after(200, app.destroy)
-            conn.close()
-        except Exception as e:
-            print("Erreur dans le socket_listener :", e)
-            break
+CHANGELOG_FILE = os.path.join(PROJECT_DIR, "CHANGELOG")
+CHANGELOG_HIDE = os.path.join(PROJECT_DIR, "CHANGELOGHIDE")
+VERSION_FILE = os.path.join(PROJECT_DIR, "version.txt")
+ICON_FILE = os.path.join(PROJECT_DIR, "icon.png")
+PATCH_NOTE_FLAG = os.path.join(PROJECT_DIR, "PATCH_NOTE_PENDING")
 
 ######################################
 # Configuration RDP par défaut
@@ -154,230 +264,83 @@ else:
 ######################################
 if os.path.exists(LANGUAGE_FILE):
     with open(LANGUAGE_FILE, "r", encoding="utf-8") as f:
-         CURRENT_LANG = f.read().strip()
+        CURRENT_LANG = f.read().strip()
 else:
     CURRENT_LANG = "fr"
 if os.path.exists(THEME_FILE):
     with open(THEME_FILE, "r", encoding="utf-8") as f:
-         CURRENT_THEME = f.read().strip()
+        CURRENT_THEME = f.read().strip()
 else:
     CURRENT_THEME = "dark"
 if os.path.exists(DISPLAY_MODE_FILE):
     with open(DISPLAY_MODE_FILE, "r", encoding="utf-8") as f:
-         CONN_DISPLAY_MODE = f.read().strip()
+        CONN_DISPLAY_MODE = f.read().strip()
 else:
     CONN_DISPLAY_MODE = "fenetres"
 
+######################################
+# Socket listener
+######################################
+def socket_listener(app):
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 50000))
+    s.listen(1)
+    print("Socket listener démarré sur le port 50000")
+    while True:
+        try:
+            conn, addr = s.accept()
+            data = conn.recv(1024).decode().strip()
+            print("Message reçu via socket :", data)
+            if data.startswith("rdp://"):
+                ip = data[len("rdp://"):]
+                subprocess.Popen(["/bin/bash", os.path.join(PROJECT_DIR, "SwiftRDP.sh"), f"rdp://{ip}"])
+                app.after(200, app.destroy)
+            conn.close()
+        except Exception as e:
+            print("Erreur dans le socket_listener :", e)
+            break
+
+######################################
+# Définition de get_theme
+######################################
 def get_theme():
     if CURRENT_THEME == "light":
-         return {
-             "bg": "#ffffff",
-             "fg": "#000000",
-             "entry_bg": "#f0f0f0",
-             "button_bg": "#e0e0e0",
-             "button_fg": "#000000",
-             "tree_bg": "#ffffff",
-             "tree_fg": "#000000"
-         }
+        return {
+            "bg": "#ffffff",
+            "fg": "#000000",
+            "entry_bg": "#f0f0f0",
+            "button_bg": "#e0e0e0",
+            "button_fg": "#000000",
+            "tree_bg": "#ffffff",
+            "tree_fg": "#000000"
+        }
     else:
-         # Pour le thème sombre, nous utilisons ici les valeurs d'origine
-         return {
-             "bg": "#2b2b2b",
-             "fg": "#ffffff",
-             "entry_bg": "#3a3a3a",
-             "button_bg": "#3a3a3a",
-             "button_fg": "#ffffff",
-             "tree_bg": "#1b1b1b",  # Ancienne valeur pour le fond du Treeview en sombre
-             "tree_fg": "#c0c0c0"
-         }
+        return {
+            "bg": "#2b2b2b",
+            "fg": "#ffffff",
+            "entry_bg": "#3a3a3a",
+            "button_bg": "#3a3a3a",
+            "button_fg": "#ffffff",
+            "tree_bg": "#1b1b1b",
+            "tree_fg": "#c0c0c0"
+        }
 
 ######################################
-# Traductions
+# Fonction pour appliquer le style personnalisé du Treeview
 ######################################
-translations = {
-    "fr": {
-         "title": "SwiftRDP",
-         "search": "Recherche:",
-         "connect": "Se connecter",
-         "add": "Ajouter",
-         "modify": "Modifier",
-         "delete": "Supprimer",
-         "manage_groups": "Gérer Groupes",
-         "options": "Options",
-         "preferences": "Préférences",
-         "patch_note": "Notes de mise à jour",
-         "dont_show_again": "Ne plus afficher",
-         "view_patch_note": "Voir les notes de mise à jour",
-         "patch_note_empty": "Aucune note de mise à jour disponible.",
-         "error": "Erreur",
-         "warning": "Avertissement",
-         "info": "Info",
-         "confirm": "Confirmer",
-         "all_fields_required": "Tous les champs (sauf note, sauf groupe) doivent être remplis.",
-         "error_duplicate_name": "Le nom '{name}' existe déjà. Veuillez en choisir un autre.",
-         "warning_duplicate_ip": "L'IP '{ip}' est déjà enregistrée. Voulez-vous continuer ?",
-         "connection_added": "Connexion ajoutée.",
-         "connection_modified": "Connexion modifiée.",
-         "language_saved_restart": "La langue, le thème et les raccourcis ont été enregistrés. L'application va redémarrer automatiquement.",
-         "new_version_available": "Une nouvelle version est disponible. Voulez-vous mettre à jour SwiftRDP ?",
-         "no_update_available": "Aucune mise à jour disponible.",
-         "update_failed": "La mise à jour a échoué",
-         "update_complete": "Mise à jour et redémarrage.",
-         "update_in_progress_t": "Mise à jour en cours...",
-         "select_connection": "Veuillez sélectionner une connexion.",
-         "delete_connection": "Supprimer la connexion",
-         "connection_deleted": "Connexion supprimée.",
-         "note_full": "Note complète",
-         "note_for": "Note pour",
-         "password": "Mot de passe",
-         "enter_password_for": "Entrez le mot de passe pour",
-         "no_password": "Aucun mot de passe fourni.",
-         "launch_error": "Erreur lors du lancement de SwiftRDP",
-         "connecting": "Connexion en cours...",
-         "please_wait": "Connexion en cours, veuillez patienter...",
-         "connection_failed": "Connexion échouée",
-         "new_group": "Nouveau groupe",
-         "enter_new_group": "Entrez le nom du nouveau groupe:",
-         "add_connection_title": "Ajouter Connexion",
-         "modify_connection_title": "Modifier Connexion",
-         "add_note_title": "Ajouter une note",
-         "modify_note_title": "Modifier la Note",
-         "name": "Nom:",
-         "ip": "IP:",
-         "login": "Login:",
-         "group": "Groupe:",
-         "last_connection": "Dernière connexion",
-         "return": "Retour",
-         "add_note": "Ajouter une note",
-         "manage_groups_title": "Gérer Groupes",
-         "add_group_option": "Ajouter Groupe",
-         "existing_groups": "Groupes existants:",
-         "select_group": "Veuillez sélectionner un groupe.",
-         "save_configuration_option": "Sauvegarder la configuration",
-         "export_configuration_option": "Exporter la configuration",
-         "import_configuration_option": "Importer la configuration",
-         "delete_configuration_option": "Supprimer la configuration",
-         "update_option": "Mettre à jour SwiftRDP",
-         "support_option": "Support",
-         "choose_backup_directory": "Choisissez le dossier de sauvegarde",
-         "choose_export_directory": "Choisissez le dossier d'exportation",
-         "select_import_file": "Sélectionnez le fichier de configuration à importer",
-         "configuration_saved": "Configuration sauvegardée dans : {path}",
-         "configuration_exported": "Configuration exportée dans : {path}",
-         "configuration_imported": "Configuration importée.",
-         "language": "Langue:",
-         "theme": "Thème:",
-         "dark": "Sombre",
-         "light": "Clair",
-         "shortcuts": "Raccourcis",
-         "switch_shortcut": "Switcher entre connexions",
-         "set_password": "Définir/modifier mot de passe SwiftRDP",
-         "display_mode": "Mode d'affichage des connexions",
-         "fenetres": "Fenêtres séparées",
-         "onglets": "Onglets",
-         "default_rdp_label": "Définir comme application RDP par défaut",
-         "delete_all_connections": "Voulez-vous supprimer toutes les connexions ?",
-         "delete_all_groups": "Voulez-vous supprimer tous les groupes ?",
-         "save": "Enregistrer"
-    },
-    "en": {
-         "title": "SwiftRDP",
-         "search": "Search:",
-         "connect": "Connect",
-         "add": "Add",
-         "modify": "Modify",
-         "delete": "Delete",
-         "manage_groups": "Manage Groups",
-         "options": "Options",
-         "preferences": "Preferences",
-         "patch_note": "Patch Notes",
-         "dont_show_again": "Don't show again",
-         "view_patch_note": "View Patch Notes",
-         "patch_note_empty": "No patch notes available.",
-         "error": "Error",
-         "warning": "Warning",
-         "info": "Info",
-         "confirm": "Confirm",
-         "all_fields_required": "Name, IP and login are required.",
-         "error_duplicate_name": "The name '{name}' already exists. Please choose another.",
-         "warning_duplicate_ip": "The IP '{ip}' already exists. Do you want to continue?",
-         "connection_added": "Connection added.",
-         "connection_modified": "Connection modified.",
-         "language_saved_restart": "Language, theme and shortcuts saved. The application will restart automatically.",
-         "new_version_available": "A new version is available. Do you want to update SwiftRDP?",
-         "no_update_available": "No update available.",
-         "update_failed": "Update failed",
-         "update_complete": "Update and restart.",
-         "update_in_progress_t": "Update in progress...",
-         "select_connection": "Please select a connection.",
-         "delete_connection": "Delete connection",
-         "connection_deleted": "Connection deleted.",
-         "note_full": "Full Note",
-         "note_for": "Note for",
-         "password": "Password",
-         "enter_password_for": "Enter password for",
-         "no_password": "No password provided.",
-         "launch_error": "Error launching SwiftRDP",
-         "connecting": "Connecting...",
-         "please_wait": "Please wait while connecting...",
-         "connection_failed": "Connection failed",
-         "new_group": "New group",
-         "enter_new_group": "Enter the new group name:",
-         "add_connection_title": "Add Connection",
-         "modify_connection_title": "Modify Connection",
-         "add_note_title": "Add Note",
-         "modify_note_title": "Modify Note",
-         "name": "Name:",
-         "ip": "IP:",
-         "login": "Username:",
-         "group": "Group:",
-         "last_connection": "Last connection",
-         "return": "Back",
-         "add_note": "Add Note",
-         "manage_groups_title": "Manage Groups",
-         "add_group_option": "Add Group",
-         "existing_groups": "Existing groups:",
-         "select_group": "Please select a group.",
-         "save_configuration_option": "Save Configuration",
-         "export_configuration_option": "Export Configuration",
-         "import_configuration_option": "Import Configuration",
-         "delete_configuration_option": "Delete Configuration",
-         "update_option": "Update SwiftRDP",
-         "support_option": "Support",
-         "choose_backup_directory": "Choose backup directory",
-         "choose_export_directory": "Choose export directory",
-         "select_import_file": "Select configuration file to import",
-         "configuration_saved": "Configuration saved in: {path}",
-         "configuration_exported": "Configuration exported in: {path}",
-         "configuration_imported": "Configuration imported.",
-         "language": "Language:",
-         "theme": "Theme:",
-         "dark": "Dark",
-         "light": "Light",
-         "shortcuts": "Shortcuts",
-         "switch_shortcut": "Switch between connections",
-         "set_password": "Set/Change SwiftRDP Password",
-         "display_mode": "Connection display mode",
-         "fenetres": "Separate windows",
-         "onglets": "Tabs",
-         "default_rdp_label": "Set as default RDP application",
-         "save": "Save"
-    }
-}
-
-def t(key, **kwargs):
-    text = translations.get(CURRENT_LANG, translations["fr"]).get(key, key)
-    return text.format(**kwargs)
+def apply_custom_treeview_style():
+    style = ttk.Style()
+    style.theme_use("clam")
+    if CURRENT_THEME == "dark":
+        style.configure("My.Treeview", background="#2b2b2b", fieldbackground="#2b2b2b", foreground="#c0c0c0")
+        style.configure("My.Treeview.Heading", background="#1b1b1b", foreground="#ffffff")
+    else:
+        style.configure("My.Treeview", background="#ffffff", fieldbackground="#ffffff", foreground="#000000")
+        style.configure("My.Treeview.Heading", background="#e0e0e0", foreground="#000000")
 
 ######################################
-# Fichiers de configuration et projet
+# Fonctions utilitaires diverses
 ######################################
-PROJECT_DIR = "/opt/SwiftRDP"
-ICON_FILE = os.path.join(PROJECT_DIR, "icon.png")
-for file in (FILE_CONNS, GROUPS_FILE):
-    if not os.path.exists(file):
-        open(file, "w", encoding="utf-8").close()
-
 def format_note(note):
     display = note.replace("\n", " ")
     return display if len(display) <= 30 else display[:30] + "..."
@@ -484,6 +447,23 @@ def delete_configuration():
         app.attributes("-topmost", False)
     app.refresh_table()
 
+def refresh_table_global(app):
+    for i in app.tree.get_children():
+        app.tree.delete(i)
+    data = load_connections()
+    filter_text = app.search_var.get().lower()
+    if filter_text:
+        data = [row for row in data if any(filter_text in str(field).lower() for field in row)]
+    groups = {}
+    for row in data:
+        grp = row[5] if row[5] else "Sans groupe"
+        groups.setdefault(grp, []).append(row)
+    for grp in sorted(groups.keys(), key=lambda g: g.lower()):
+        rows = sorted(groups[grp], key=lambda r: r[0].lower())
+        parent_id = app.tree.insert("", "end", text=grp, open=True)
+        for row in rows:
+            app.tree.insert(parent_id, "end", text=row[0], values=(row[1], row[2], row[3], format_note(row[4])))
+
 def treeview_sort_column(tv, col, reverse):
     data = [(tv.set(k, col), k) for k in tv.get_children('')]
     data.sort(key=lambda t: t[0].lower(), reverse=reverse)
@@ -499,74 +479,39 @@ def window_exists(root, title):
     return False
 
 ######################################
-# Fonctions pour le patch note
+# Fenêtre "À propos" améliorée
 ######################################
-def get_version():
-    try:
-        with open(VERSION_FILE, "r", encoding="utf-8") as f:
-            return f.read().strip()
-    except:
-        return ""
+def about_dialog(app):
+    top = tk.Toplevel(app)
+    top.title("À propos de SwiftRDP")
+    top.geometry("500x300")
+    top.resizable(False, False)
+    top.transient(app)
+    top.grab_set()
+    top.configure(bg=app.theme["bg"])
+    
+    header = tk.Label(top, text="SwiftRDP", font=("Segoe Script", 20, "bold"), bg=app.theme["bg"], fg=app.theme["fg"])
+    header.pack(pady=(20, 5))
+    
+    version_label = tk.Label(top, text="Version 2.7", font=("Segoe Script", 14), bg=app.theme["bg"], fg=app.theme["fg"])
+    version_label.pack(pady=(0, 10))
+    
+    separator = ttk.Separator(top, orient="horizontal")
+    separator.pack(fill="x", padx=20, pady=5)
+    
+    info_text = ("Développé par Dorian SCHNEIDER\n"
+                 "Ce programme est fourni sans aucune garantie.\n"
+                 "Pour plus d'informations, visitez le projet sur GitHub.")
+    info_label = tk.Label(top, text=info_text, font=("Segoe Script", 12), bg=app.theme["bg"], fg=app.theme["fg"], justify="center")
+    info_label.pack(pady=(10, 10))
+    
+    link = tk.Label(top, text="GitHub : https://github.com/Equinoxx83/SwiftRDP", font=("Segoe Script", 12, "underline"), fg="blue", bg=app.theme["bg"], cursor="hand2")
+    link.pack()
+    link.bind("<Button-1>", lambda e: webbrowser.open("https://github.com/Equinoxx83/SwiftRDP"))
+    
+    close_btn = tk.Button(top, text="OK", font=("Segoe Script", 12), bg=app.theme["button_bg"], fg=app.theme["button_fg"], command=top.destroy)
+    close_btn.pack(pady=(20, 10))
 
-def read_patch_note():
-    if os.path.exists(CHANGELOG_FILE):
-        with open(CHANGELOG_FILE, "r", encoding="utf-8") as f:
-            content = f.read().strip()
-            return content if content else t("patch_note_empty")
-    return t("patch_note_empty")
-
-######################################
-# Arborescence et menu contextuel
-######################################
-def show_context_menu(app, event):
-    iid = app.tree.identify_row(event.y)
-    if iid:
-        app.tree.selection_set(iid)
-        item = app.tree.item(iid)
-        # Si l'item possède des valeurs, il s'agit d'une connexion (et non d'un groupe)
-        if item.get("values"):
-            menu = tk.Menu(app, tearoff=0)
-            menu.add_command(label="Se connecter", command=lambda: app.connect_connection(item["values"]))
-            menu.add_command(label="Modifier", command=app.action_modify)
-            menu.add_command(label="Supprimer", command=app.action_delete)
-            menu.add_command(label="Modifier la note", command=app.action_view_note)
-            menu.tk_popup(event.x_root, event.y_root)
-    else:
-        pass
-
-# refresh_table() pour créer une arborescence par groupe
-def refresh_table(app):
-    for i in app.tree.get_children():
-        app.tree.delete(i)
-    data = load_connections()
-    filter_text = app.search_var.get().lower()
-    if filter_text:
-        data = [row for row in data if any(filter_text in str(field).lower() for field in row)]
-    groups = {}
-    for row in data:
-        grp = row[5] if row[5] else "Sans groupe"
-        groups.setdefault(grp, []).append(row)
-    for grp, rows in groups.items():
-        parent_id = app.tree.insert("", "end", text=grp, open=True)
-        for row in rows:
-            app.tree.insert(parent_id, "end", text=row[0], values=(row[1], row[2], row[3], format_note(row[4])))
-
-######################################
-# Fonction de double-clic
-######################################
-def on_double_click(self, event):
-    # Détecte sur quelle colonne on a cliqué
-    col = self.tree.identify_column(event.x)
-    if col == "#4":  # La colonne 4 correspond à la note
-        self.action_view_note()
-    else:
-        row = self.get_selected_row()
-        if row:
-            self.connect_connection(row)
-
-######################################
-# Fonctions pour la mise à jour
-######################################
 def check_for_update(app, from_menu=False):
     repo_url = "https://github.com/Equinoxx83/SwiftRDP.git"
     temp_dir = tempfile.mkdtemp()
@@ -658,30 +603,57 @@ class RDPApp(tk.Tk):
         self.configure(bg=self.theme["bg"])
         self.font_main = ("Segoe Script", 12)
         self.font_heading = ("Segoe Script", 12)
+        # Variable pour stocker le temps du dernier clic
+        self.last_click_time = 0
         self.create_widgets()
         self.refresh_table()
-        # Liaison du clic droit pour le menu contextuel
-        self.tree.bind("<Button-3>", lambda event: show_context_menu(self, event))
-        self.tree.bind("<Double-1>", on_double_click.__get__(self))
-        threading.Thread(target=socket_listener, args=(self,), daemon=True).start()
+        self.tree.bind("<Button-1>", self.record_click)
+        self.tree.bind("<Double-1>", self.handle_double_click)
         for i in range(1, 10):
-            self.bind_all(f"<Control-Key-{i}>", lambda event, n=i: switch_to_window(n))
-        if os.path.exists(PATCH_NOTE_FLAG):
+            self.bind_all(f"<Control-Key-{i}>", lambda event, n=i: treeview_sort_column(self.tree, "#0", False))
+        # Réappliquer le thème lors du mapping de la fenêtre
+        self.bind("<Map>", self.on_map)
+        if not os.path.exists(CHANGELOG_HIDE):
             self.after(2000, lambda: self.show_patch_note_dialog(read_patch_note()))
-            os.remove(PATCH_NOTE_FLAG)
         self.after(2000, lambda: check_for_update(self))
+    
+    def on_map(self, event):
+        self.configure(bg=self.theme["bg"])
+    
+    def record_click(self, event):
+        self.last_click_time = event.time
+    
+    def handle_double_click(self, event):
+        if (event.time - self.last_click_time) > DOUBLE_CLICK_THRESHOLD:
+            return  # Ignorer si le double-clic est trop lent
+        row = self.get_selected_row()
+        if row is None:
+            return
+        col = self.tree.identify_column(event.x)
+        if col == "#4":
+            self.edit_connection_note(row)
+        else:
+            self.connect_connection(row)
+    
+    # Méthode pour réappliquer le style personnalisé au Treeview
+    def reset_treeview_style(self):
+        apply_custom_treeview_style()
+        self.tree.configure(style="My.Treeview")
     
     def prompt_rdp_connection(self, ip):
         login = simpledialog.askstring("Login", "Entrez votre login :", parent=self)
         pwd = simpledialog.askstring("Mot de passe", "Entrez votre mot de passe :", show="*", parent=self)
         if login and pwd:
-            row = [ip, ip, login, "N/A", "", ""]  # le groupe reste optionnel
+            row = [ip, ip, login, "N/A", "", ""]  # Groupe optionnel
             self.connect_connection(row, pwd_provided=pwd)
         else:
             messagebox.showerror("Erreur", "Login ou mot de passe non fourni.", parent=self)
     
     def connect_connection(self, row, pwd_provided=None):
         if self.connection_in_progress:
+            return
+        if row is None:
+            self.connection_in_progress = False
             return
         self.connection_in_progress = True
         start_time = time.time()
@@ -695,7 +667,7 @@ class RDPApp(tk.Tk):
             self.connection_in_progress = False
             return
         try:
-            rdp_proc = subprocess.Popen(
+            subprocess.Popen(
                 ["xfreerdp", f"/v:{row[1]}", f"/u:{row[2]}", f"/p:{pwd}",
                  "/dynamic-resolution", "/cert-ignore", f"/title:SwiftRDP: {row[1]}"],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -731,7 +703,7 @@ class RDPApp(tk.Tk):
             if progress_win.winfo_exists():
                 if count <= 100:
                     pb['value'] = count
-                    self.after(140, update_progress, count+1)  # environ 15 sec
+                    self.after(140, update_progress, count+1)
                 else:
                     try:
                         progress_win.destroy()
@@ -759,9 +731,11 @@ class RDPApp(tk.Tk):
                 new_row[3] = new_date
                 update_connection_by_value(row, new_row)
                 self.after(0, self.refresh_table)
+                self.after(0, self.reset_treeview_style)
             else:
                 self.after(0, lambda: messagebox.showerror(t("error"), t("connection_failed"), parent=self))
             self.connection_in_progress = False
+            self.configure(bg=self.theme["bg"])
         threading.Thread(target=check_window, daemon=True).start()
     
     def show_patch_note_dialog(self, content, show_checkbox=True):
@@ -786,7 +760,7 @@ class RDPApp(tk.Tk):
             check.pack(anchor="w", padx=10, pady=5)
         def close_dialog():
             if show_checkbox and var_hide.get():
-                with open(os.path.join(PROJECT_DIR, "CHANGELOGHIDE"), "w", encoding="utf-8") as f:
+                with open(CHANGELOG_HIDE, "w", encoding="utf-8") as f:
                     f.write(get_version())
             dialog.destroy()
         tk.Button(dialog, text=t("return"), command=close_dialog, font=self.font_main,
@@ -804,9 +778,11 @@ class RDPApp(tk.Tk):
             combobox["values"] = groups
             var.set(new_grp)
     
-    # Création de l'arborescence par groupe dans le Treeview
+    # Création de l'arborescence par groupe
     def create_widgets(self):
         self.theme = get_theme()
+        # Appliquer le style personnalisé au Treeview
+        apply_custom_treeview_style()
         search_frame = tk.Frame(self, bg=self.theme["bg"])
         search_frame.pack(fill=tk.X, padx=15, pady=10)
         tk.Label(search_frame, text=t("search"), font=self.font_main, bg=self.theme["bg"], fg=self.theme["fg"]).pack(side=tk.LEFT)
@@ -814,9 +790,8 @@ class RDPApp(tk.Tk):
         self.search_var.trace("w", lambda *args: self.refresh_table())
         tk.Entry(search_frame, textvariable=self.search_var, font=self.font_main, bg=self.theme["entry_bg"],
                  fg=self.theme["fg"], insertbackground=self.theme["fg"], relief="flat").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
-        # Utilisation d'un Treeview en mode "tree headings" pour l'arborescence
         columns = ("IP", "Login", "Dernière connexion", "Note")
-        self.tree = ttk.Treeview(self, columns=columns, show="tree headings", selectmode="browse")
+        self.tree = ttk.Treeview(self, style="My.Treeview", columns=columns, show="tree headings", selectmode="browse")
         self.tree.heading("#0", text="Nom")
         self.tree.column("#0", width=300)
         self.tree.heading("IP", text="IP")
@@ -827,16 +802,8 @@ class RDPApp(tk.Tk):
         self.tree.column("Dernière connexion", width=200)
         self.tree.heading("Note", text="Note")
         self.tree.column("Note", width=300)
-        # Configuration du style pour le thème sombre (comme avant)
-        style = ttk.Style()
-        if CURRENT_THEME == "dark":
-            style.configure("Treeview", background="#2b2b2b", fieldbackground="#2b2b2b", foreground="#c0c0c0")
-            style.configure("Treeview.Heading", background="#1b1b1b", foreground="#ffffff")
-        else:
-            style.configure("Treeview", background="#ffffff", fieldbackground="#ffffff", foreground="#000000")
-            style.configure("Treeview.Heading", background="#e0e0e0", foreground="#000000")
         self.tree.pack(fill=tk.BOTH, expand=True, padx=15, pady=10)
-        # Les événements (double-clic et clic droit) sont liés dans __init__
+        self.tree.bind("<Button-3>", lambda event: show_context_menu(self, event))
         btn_frame = tk.Frame(self, bg=self.theme["bg"])
         btn_frame.pack(fill=tk.X, padx=15, pady=10)
         btn_texts = [t("connect"), t("add"), t("modify"), t("delete"), t("manage_groups"), t("options")]
@@ -847,22 +814,8 @@ class RDPApp(tk.Tk):
         for i in range(len(btn_texts)):
             btn_frame.grid_columnconfigure(i, weight=1)
     
-    # Redéfinition de refresh_table pour l'arborescence
     def refresh_table(self):
-        for i in self.tree.get_children():
-            self.tree.delete(i)
-        data = load_connections()
-        filter_text = self.search_var.get().lower()
-        if filter_text:
-            data = [row for row in data if any(filter_text in str(field).lower() for field in row)]
-        groups = {}
-        for row in data:
-            grp = row[5] if row[5] else "Sans groupe"
-            groups.setdefault(grp, []).append(row)
-        for grp, rows in groups.items():
-            parent_id = self.tree.insert("", "end", text=grp, open=True)
-            for row in rows:
-                self.tree.insert(parent_id, "end", text=row[0], values=(row[1], row[2], row[3], format_note(row[4])))
+        refresh_table_global(self)
     
     def get_selected_row(self):
         sel = self.tree.selection()
@@ -903,38 +856,36 @@ class RDPApp(tk.Tk):
             messagebox.showinfo(t("info"), t("connection_deleted"), parent=self)
             self.refresh_table()
     
-    def action_view_note(self):
-        row = self.get_selected_row()
-        if row:
-            full_note = ""
-            for r in load_connections():
-                if r[0] == row[0] and r[5] == row[5]:
-                    full_note = r[4]
-                    break
-            top = tk.Toplevel(self)
-            top.transient(self)
-            top.iconphoto(False, self.logo)
-            top.title(t("note_full"))
-            top.geometry("600x400")
-            top.configure(bg=self.theme["bg"])
-            tk.Label(top, text=f"{t('note_for')} {row[0]}:", font=("Segoe Script", 12),
-                     bg=self.theme["bg"], fg=self.theme["button_fg"]).pack(pady=10)
-            text = tk.Text(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"],
-                            wrap=tk.WORD, height=15, width=70, relief="flat")
-            text.insert(tk.END, full_note)
-            text.config(state="disabled")
-            text.pack(padx=20, pady=10, fill=tk.BOTH, expand=True)
-            tk.Button(top, text=t("return"), command=top.destroy, font=("Segoe Script", 12),
-                      bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(pady=10)
+    def edit_connection_note(self, row):
+        if window_exists(self, t("modify_note_title")):
+            return
+        top = tk.Toplevel(self)
+        top.transient(self)
+        top.iconphoto(False, self.logo)
+        top.title(t("modify_note_title"))
+        top.geometry("600x350")
+        top.configure(bg=self.theme["bg"])
+        tk.Label(top, text=f"{t('note_for')} {row[0]}:", font=("Segoe Script", 12),
+                 bg=self.theme["bg"], fg=self.theme["button_fg"]).pack(pady=10)
+        text = tk.Text(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"],
+                        wrap=tk.WORD, height=10, width=70, relief="flat")
+        text.insert(tk.END, row[4])
+        text.pack(padx=20, pady=10, fill=tk.BOTH, expand=True)
+        btn_frame = tk.Frame(top, bg=self.theme["bg"])
+        btn_frame.pack(pady=20)
+        tk.Button(btn_frame, text=t("save"), command=lambda: self.save_note(top, text, row),
+                  font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=20, expand=True)
+        tk.Button(btn_frame, text=t("return"), command=top.destroy,
+                  font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=20, expand=True)
     
-    def prompt_rdp_connection(self, ip):
-        login = simpledialog.askstring("Login", "Entrez votre login :", parent=self)
-        pwd = simpledialog.askstring("Mot de passe", "Entrez votre mot de passe :", show="*", parent=self)
-        if login and pwd:
-            row = [ip, ip, login, "N/A", "", ""]  # Le groupe reste optionnel
-            self.connect_connection(row, pwd_provided=pwd)
-        else:
-            messagebox.showerror("Erreur", "Login ou mot de passe non fourni.", parent=self)
+    def save_note(self, top, text, row):
+        new_note = text.get("1.0", tk.END).strip()
+        new_row = row.copy()
+        new_row[4] = new_note
+        update_connection_by_value(row, new_row)
+        messagebox.showinfo(t("info"), "Note mise à jour.", parent=top)
+        top.destroy()
+        self.refresh_table()
     
     def add_connection(self):
         if window_exists(self, t("add_connection_title")):
@@ -957,7 +908,7 @@ class RDPApp(tk.Tk):
         e_login.grid(row=2, column=1, padx=15, pady=8, sticky="w")
         tk.Label(top, text=t("group"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"]).grid(row=3, column=0, padx=15, pady=8, sticky="e")
         existing_groups = get_existing_groups()
-        group_var = tk.StringVar()  # Pas de pré-remplissage
+        group_var = tk.StringVar()
         group_options = existing_groups if existing_groups else []
         group_frame = tk.Frame(top, bg=self.theme["bg"])
         group_frame.grid(row=3, column=1, padx=15, pady=8, sticky="w")
@@ -1006,7 +957,7 @@ class RDPApp(tk.Tk):
         name_val = e_name.get().strip()
         ip_val = e_ip.get().strip()
         login_val = e_login.get().strip()
-        group_val = group_var.get().strip()  # Optionnel
+        group_val = group_var.get().strip()
         if not name_val or not ip_val or not login_val:
             messagebox.showerror(t("error"), t("all_fields_required"), parent=top)
             return
@@ -1150,27 +1101,28 @@ class RDPApp(tk.Tk):
         top.attributes("-topmost", True)
         top.iconphoto(False, self.logo)
         top.title(t("options"))
-        top.geometry("450x390")
+        top.geometry("400x430")
         top.configure(bg=self.theme["bg"])
         btn_frame = tk.Frame(top, bg=self.theme["bg"])
         btn_frame.pack(expand=True, fill=tk.BOTH, pady=10)
-        tk.Button(btn_frame, text=t("save_configuration_option"), command=lambda: [top.destroy(), self.save_configuration()], font=self.font_main,
-                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
-        tk.Button(btn_frame, text=t("export_configuration_option"), command=lambda: [top.destroy(), self.export_configuration()], font=self.font_main,
-                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
-        tk.Button(btn_frame, text=t("import_configuration_option"), command=lambda: [top.destroy(), self.import_configuration()], font=self.font_main,
-                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
-        tk.Button(btn_frame, text=t("delete_configuration_option"), command=lambda: [top.destroy(), self.delete_configuration()], font=self.font_main,
-                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
-        tk.Button(btn_frame, text=t("update_option"), command=lambda: [top.destroy(), threading.Thread(target=check_for_update, args=(self, True), daemon=True).start()], font=self.font_main,
-                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
-        tk.Button(btn_frame, text=t("support_option"), command=lambda: [top.destroy(), webbrowser.open("https://github.com/Equinoxx83/SwiftRDP/issues")], font=self.font_main,
-                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
-        tk.Button(btn_frame, text=t("view_patch_note"),
-                  command=lambda: [top.destroy(), self.show_patch_note_dialog(read_patch_note(), show_checkbox=False)], font=self.font_main,
-                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
-        tk.Button(btn_frame, text=t("preferences"), command=lambda: [top.destroy(), self.preferences_menu()], font=self.font_main,
-                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
+        tk.Button(btn_frame, text=t("save_configuration_option"), command=lambda: [top.destroy(), self.save_configuration()],
+                  font=self.font_main, bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
+        tk.Button(btn_frame, text=t("export_configuration_option"), command=lambda: [top.destroy(), self.export_configuration()],
+                  font=self.font_main, bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
+        tk.Button(btn_frame, text=t("import_configuration_option"), command=lambda: [top.destroy(), self.import_configuration()],
+                  font=self.font_main, bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
+        tk.Button(btn_frame, text=t("delete_configuration_option"), command=lambda: [top.destroy(), self.delete_configuration()],
+                  font=self.font_main, bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
+        tk.Button(btn_frame, text=t("update_option"), command=lambda: [top.destroy(), threading.Thread(target=check_for_update, args=(self, True), daemon=True).start()],
+                  font=self.font_main, bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
+        tk.Button(btn_frame, text=t("support_option"), command=lambda: [top.destroy(), webbrowser.open("https://github.com/Equinoxx83/SwiftRDP/issues")],
+                  font=self.font_main, bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
+        tk.Button(btn_frame, text=t("view_patch_note"), command=lambda: [top.destroy(), self.show_patch_note_dialog(read_patch_note(), show_checkbox=False)],
+                  font=self.font_main, bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
+        tk.Button(btn_frame, text="A propos", command=lambda: [top.destroy(), about_dialog(self)],
+                  font=self.font_main, bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
+        tk.Button(btn_frame, text=t("preferences"), command=lambda: [top.destroy(), self.preferences_menu()],
+                  font=self.font_main, bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
     
     def display_mode_menu(self):
         top = tk.Toplevel(self)
@@ -1217,7 +1169,7 @@ class RDPApp(tk.Tk):
         lang_frame.pack(pady=10)
         tk.Label(lang_frame, text=t("language"), font=self.font_main, bg=self.theme["bg"], fg=self.theme["button_fg"]).pack(anchor="w", padx=10)
         lang_var = tk.StringVar(value=CURRENT_LANG)
-        if CURRENT_THEME=="dark":
+        if CURRENT_THEME == "dark":
             sel_color = "#dddddd"
             unsel_color = "#555555"
         else:
@@ -1225,10 +1177,10 @@ class RDPApp(tk.Tk):
             unsel_color = "#eeeeee"
         btn_lang_fr = tk.Button(lang_frame, text="Français", font=self.font_main, width=10,
                                  command=lambda: [lang_var.set("fr"), btn_lang_fr.config(bg=sel_color), btn_lang_en.config(bg=unsel_color)],
-                                 bg=sel_color if CURRENT_LANG=="fr" else unsel_color, fg="black")
+                                 bg=sel_color if CURRENT_LANG == "fr" else unsel_color, fg="black")
         btn_lang_en = tk.Button(lang_frame, text="English", font=self.font_main, width=10,
                                  command=lambda: [lang_var.set("en"), btn_lang_en.config(bg=sel_color), btn_lang_fr.config(bg=unsel_color)],
-                                 bg=sel_color if CURRENT_LANG=="en" else unsel_color, fg="black")
+                                 bg=sel_color if CURRENT_LANG == "en" else unsel_color, fg="black")
         btn_lang_fr.pack(side=tk.LEFT, padx=10)
         btn_lang_en.pack(side=tk.LEFT, padx=10)
     
@@ -1239,10 +1191,10 @@ class RDPApp(tk.Tk):
         theme_var = tk.StringVar(value=CURRENT_THEME)
         btn_theme_dark = tk.Button(theme_frame, text=t("dark"), font=self.font_main, width=10,
                                    command=lambda: [theme_var.set("dark"), btn_theme_dark.config(bg=sel_color), btn_theme_light.config(bg=unsel_color)],
-                                   bg=sel_color if CURRENT_THEME=="dark" else unsel_color, fg="black")
+                                   bg=sel_color if CURRENT_THEME == "dark" else unsel_color, fg="black")
         btn_theme_light = tk.Button(theme_frame, text=t("light"), font=self.font_main, width=10,
                                     command=lambda: [theme_var.set("light"), btn_theme_light.config(bg=sel_color), btn_theme_dark.config(bg=unsel_color)],
-                                    bg=sel_color if CURRENT_THEME=="light" else unsel_color, fg="black")
+                                    bg=sel_color if CURRENT_THEME == "light" else unsel_color, fg="black")
         btn_theme_dark.pack(side=tk.LEFT, padx=10)
         btn_theme_light.pack(side=tk.LEFT, padx=10)
     
@@ -1276,6 +1228,7 @@ class RDPApp(tk.Tk):
     
         def save_preferences():
             global CURRENT_LANG, CURRENT_THEME
+            pwd_changed = False
             if current_pwd.get().strip() or new_pwd.get().strip() or conf_pwd.get().strip():
                 if os.path.exists(PASSWORD_FILE):
                     with open(PASSWORD_FILE, "r", encoding="utf-8") as f:
@@ -1290,13 +1243,14 @@ class RDPApp(tk.Tk):
                     else:
                         with open(PASSWORD_FILE, "w", encoding="utf-8") as f:
                             f.write(hash_password(new_pwd.get().strip()))
+                        pwd_changed = True
                 else:
                     if os.path.exists(PASSWORD_FILE):
                         os.remove(PASSWORD_FILE)
             new_lang = lang_var.get()
             new_theme = theme_var.get()
             changed = (new_lang != CURRENT_LANG) or (new_theme != CURRENT_THEME)
-            if changed:
+            if changed or pwd_changed:
                 CURRENT_LANG = new_lang
                 CURRENT_THEME = new_theme
                 with open(LANGUAGE_FILE, "w", encoding="utf-8") as f:
@@ -1365,7 +1319,7 @@ class RDPApp(tk.Tk):
             progress_win.geometry("400x100")
             progress_win.configure(bg=self.theme["bg"])
             tk.Label(progress_win, text=t("update_in_progress_t"), font=self.font_main,
-                     bg=self.theme["bg"], fg=self.theme["button_fg"]).pack(pady=10)
+                     bg=self.theme["bg"], fg=self.theme["fg"]).pack(pady=10)
             pb = ttk.Progressbar(progress_win, mode="determinate", maximum=100)
             pb.pack(fill=tk.X, padx=20, pady=10)
             for i in range(101):
@@ -1412,14 +1366,45 @@ class RDPApp(tk.Tk):
         top.destroy()
         self.refresh_table()
 
+def check_password(parent):
+    if os.path.exists(PASSWORD_FILE):
+        with open(PASSWORD_FILE, "r", encoding="utf-8") as f:
+            stored_hash = f.read().strip()
+        pwd = simpledialog.askstring("Mot de passe", "Entrez le mot de passe pour lancer SwiftRDP:", show="*", parent=parent)
+        if not pwd or hash_password(pwd) != stored_hash:
+            messagebox.showerror("Erreur", "Mot de passe incorrect.", parent=parent)
+            return False
+    return True
+
+def read_patch_note():
+    if os.path.exists(CHANGELOG_FILE):
+        with open(CHANGELOG_FILE, "r", encoding="utf-8") as f:
+            content = f.read().strip()
+            return content if content else t("patch_note_empty")
+    return t("patch_note_empty")
+
+def show_context_menu(app, event):
+    iid = app.tree.identify_row(event.y)
+    if iid:
+        app.tree.selection_set(iid)
+        item = app.tree.item(iid)
+        if item.get("values"):
+            menu = tk.Menu(app, tearoff=0)
+            menu.add_command(label=t("connect"), command=lambda: app.connect_connection(app.get_selected_row()))
+            menu.add_command(label=t("modify"), command=app.action_modify)
+            menu.add_command(label=t("delete"), command=app.action_delete)
+            menu.add_command(label=t("modify_note_title"), command=lambda: app.edit_connection_note(app.get_selected_row()))
+            menu.tk_popup(event.x_root, event.y_root)
+    return
+
 if __name__ == "__main__":
     app = RDPApp()
     threading.Thread(target=socket_listener, args=(app,), daemon=True).start()
-    if len(sys.argv) > 1 and sys.argv[1].startswith("rdp://"):
-        ip = sys.argv[1][len("rdp://"):]
-        app.after(100, lambda: app.prompt_rdp_connection(ip))
     app.withdraw()
     if not check_password(app):
         sys.exit(1)
     app.deiconify()
+    if len(sys.argv) > 1 and sys.argv[1].startswith("rdp://"):
+        ip = sys.argv[1][len("rdp://"):]
+        app.after(100, lambda: app.prompt_rdp_connection(ip))
     app.mainloop()
