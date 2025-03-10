@@ -7,3 +7,4 @@
 - Fix only 1 instance when using rdp link in web
 - fix pop-up update if you use password for SwiftRDP
 - Improve connection when using rdp link in web don't need to use login if the connexion exist on your interface
+- Improve title RDP connection
