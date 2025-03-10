@@ -493,7 +493,7 @@ def about_dialog(app):
     header = tk.Label(top, text="SwiftRDP", font=("Segoe Script", 20, "bold"), bg=app.theme["bg"], fg=app.theme["fg"])
     header.pack(pady=(20, 5))
     
-    version_label = tk.Label(top, text="Version 2.7", font=("Segoe Script", 14), bg=app.theme["bg"], fg=app.theme["fg"])
+    version_label = tk.Label(top, text="Version 2.9", font=("Segoe Script", 14), bg=app.theme["bg"], fg=app.theme["fg"])
     version_label.pack(pady=(0, 10))
     
     separator = ttk.Separator(top, orient="horizontal")
@@ -662,9 +662,10 @@ class RDPApp(tk.Tk):
             self.connection_in_progress = False
             return
         try:
+            # Le titre est maintenant "SwiftRDP - [nom] ([IP])"
             subprocess.Popen(
                 ["xfreerdp", f"/v:{row[1]}", f"/u:{row[2]}", f"/p:{pwd}",
-                 "/dynamic-resolution", "/cert-ignore", f"/title:SwiftRDP: {row[1]}"],
+                 "/dynamic-resolution", "/cert-ignore", f"/title:SwiftRDP - {row[0]} ({row[1]})"],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, start_new_session=True)
         except Exception as e:
@@ -694,6 +695,7 @@ class RDPApp(tk.Tk):
         pb = ttk.Progressbar(progress_win, mode="determinate", maximum=100,
                              style="grey.Horizontal.TProgressbar")
         pb.pack(fill=tk.X, padx=20, pady=10)
+    
         def update_progress(count=0):
             if progress_win.winfo_exists():
                 if count <= 100:
@@ -705,6 +707,8 @@ class RDPApp(tk.Tk):
                     except Exception:
                         pass
         update_progress()
+        # Attendre 1 seconde pour laisser le temps au client RDP de démarrer
+        time.sleep(1)
         def check_window():
             found = False
             while time.time() - start_time < timeout:
@@ -712,7 +716,8 @@ class RDPApp(tk.Tk):
                     output = subprocess.check_output(["wmctrl", "-l"], text=True)
                 except Exception:
                     output = ""
-                if f"swiftrdp: {row[1].lower()}" in output.lower():
+                # Vérification en cherchant "swiftrdp" et l'IP de la connexion dans le titre
+                if "swiftrdp" in output.lower() and row[1].lower() in output.lower():
                     found = True
                     break
                 time.sleep(0.1)
@@ -733,23 +738,22 @@ class RDPApp(tk.Tk):
             self.connection_in_progress = False
             self.configure(bg=self.theme["bg"])
         threading.Thread(target=check_window, daemon=True).start()
-    
+
     def handle_rdp_link(self, ip):
-        # Mettre l'application au premier plan
+        # Ramener la fenêtre de l'application au premier plan
+        self.deiconify()
         self.lift()
         self.focus_force()
         conns = load_connections()
         for row in conns:
             if row[1] == ip:
-                # L'IP existe déjà : se connecter directement
+                # Si l'IP est déjà enregistrée, demande de se connecter
                 self.connect_connection(row)
                 return
-        # L'IP n'est pas enregistrée : proposer d'ajouter la connexion
+        # Si l'IP n'existe pas, proposer d'ajouter la connexion ou se connecter temporairement
         if messagebox.askyesno(t("confirm"), f"L'IP {ip} n'existe pas. Voulez-vous l'ajouter ?", parent=self):
-            # Ouvrir la fenêtre d'ajout en pré-remplissant l'IP
             self.add_connection(prefill_ip=ip, callback=True)
         else:
-            # Proposer de se connecter temporairement (sans enregistrement)
             login = simpledialog.askstring("Login", "Entrez votre login :", parent=self)
             if not login:
                 messagebox.showerror("Erreur", "Login requis.", parent=self)
