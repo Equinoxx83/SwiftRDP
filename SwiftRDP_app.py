@@ -493,7 +493,7 @@ def about_dialog(app):
     header = tk.Label(top, text="SwiftRDP", font=("Segoe Script", 20, "bold"), bg=app.theme["bg"], fg=app.theme["fg"])
     header.pack(pady=(20, 5))
     
-    version_label = tk.Label(top, text="Version 2.9", font=("Segoe Script", 14), bg=app.theme["bg"], fg=app.theme["fg"])
+    version_label = tk.Label(top, text="Version 2.9.1", font=("Segoe Script", 14), bg=app.theme["bg"], fg=app.theme["fg"])
     version_label.pack(pady=(0, 10))
     
     separator = ttk.Separator(top, orient="horizontal")
@@ -708,7 +708,7 @@ class RDPApp(tk.Tk):
                         pass
         update_progress()
         # Attendre 1 seconde pour laisser le temps au client RDP de démarrer
-        time.sleep(1)
+        time.sleep(2)
         def check_window():
             found = False
             while time.time() - start_time < timeout:
@@ -720,7 +720,7 @@ class RDPApp(tk.Tk):
                 if "swiftrdp" in output.lower() and row[1].lower() in output.lower():
                     found = True
                     break
-                time.sleep(0.1)
+                time.sleep(0.2)
             try:
                 progress_win.destroy()
             except Exception:
