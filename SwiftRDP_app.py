@@ -708,7 +708,7 @@ class RDPApp(tk.Tk):
                         pass
         update_progress()
         # Attendre 1 seconde pour laisser le temps au client RDP de démarrer
-        time.sleep(2)
+        time.sleep(0.1)
         def check_window():
             found = False
             while time.time() - start_time < timeout:
@@ -720,7 +720,7 @@ class RDPApp(tk.Tk):
                 if "swiftrdp" in output.lower() and row[1].lower() in output.lower():
                     found = True
                     break
-                time.sleep(0.2)
+                time.sleep(3)
             try:
                 progress_win.destroy()
             except Exception:
