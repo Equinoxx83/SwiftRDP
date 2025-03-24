@@ -575,7 +575,16 @@ def update_app(app, repo_url, remote_version):
     def progress_and_restart():
         progress_win = tk.Toplevel(app)
         progress_win.title(t("update_complete"))
-        progress_win.geometry("400x100")
+        # Récupérer la position et la taille de la fenêtre principale
+        main_x = app.winfo_x()
+        main_y = app.winfo_y()
+        main_width = app.winfo_width()
+        main_height = app.winfo_height()
+        win_width = 400
+        win_height = 100
+        pos_x = main_x + (main_width - win_width) // 2
+        pos_y = main_y + (main_height - win_height) // 2
+        progress_win.geometry(f"{win_width}x{win_height}+{pos_x}+{pos_y}")
         progress_win.configure(bg=app.theme["bg"])
         tk.Label(progress_win, text=t("update_in_progress_t"), font=app.font_main,
                  bg=app.theme["bg"], fg=app.theme["fg"]).pack(pady=10)
