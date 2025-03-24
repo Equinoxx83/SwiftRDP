@@ -651,7 +651,6 @@ class RDPApp(tk.Tk):
             self.connection_in_progress = False
             return
         self.connection_in_progress = True
-        start_time = time.time()
         timeout = 15
         if pwd_provided is None:
             pwd = simpledialog.askstring(t("password"), f"{t('enter_password_for')} {row[0]}:", show="*", parent=self)
@@ -700,31 +699,35 @@ class RDPApp(tk.Tk):
             if progress_win.winfo_exists():
                 if count <= 100:
                     pb['value'] = count
-                    self.after(140, update_progress, count+1)
+                    self.after(158, update_progress, count + 1)
                 else:
-                    try:
+                    if progress_win.winfo_exists():
                         progress_win.destroy()
-                    except Exception:
-                        pass
+
         update_progress()
-        # Attendre 1 seconde pour laisser le temps au client RDP de démarrer
-        time.sleep(1)
+
+        # Remplacer time.sleep(1) par self.after pour ne pas bloquer le mainloop
+        self.after(1000, lambda: threading.Thread(target=check_window, daemon=True).start())
+
         def check_window():
+            start_time = time.time()
             found = False
+            # Vous pouvez éventuellement ajuster le timeout ici
             while time.time() - start_time < timeout:
                 try:
                     output = subprocess.check_output(["wmctrl", "-l"], text=True)
                 except Exception:
                     output = ""
-                # Vérification en cherchant "swiftrdp" et l'IP de la connexion dans le titre
+                # Vérification en cherchant "swiftrdp" et l'IP dans le titre
                 if "swiftrdp" in output.lower() and row[1].lower() in output.lower():
                     found = True
                     break
                 time.sleep(0.1)
-            try:
+    
+            # Détruire la fenêtre de progression si elle existe
+            if progress_win.winfo_exists():
                 progress_win.destroy()
-            except Exception:
-                pass
+    
             if found:
                 new_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 new_row = row.copy()
@@ -735,9 +738,9 @@ class RDPApp(tk.Tk):
                 self.after(0, self.reset_treeview_style)
             else:
                 self.after(0, lambda: messagebox.showerror(t("error"), t("connection_failed"), parent=self))
+    
             self.connection_in_progress = False
             self.configure(bg=self.theme["bg"])
-        threading.Thread(target=check_window, daemon=True).start()
 
     def handle_rdp_link(self, ip):
         # Ramener la fenêtre de l'application au premier plan
