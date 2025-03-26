@@ -2,3 +2,4 @@
 - Prompt to add the connection after closing RDP
 - Added the ability to register multiple users for a connection
 - Prompt to choose which user to connect with (if multiple users)
+- fix prompt in center of screen "select user"
