@@ -345,9 +345,24 @@ def format_note(note):
     display = note.replace("\n", " ")
     return display if len(display) <= 30 else display[:30] + "..."
 
-def ask_login_selection(options):
-    top = tk.Toplevel()
+def ask_login_selection(options, parent=None):
+    top = tk.Toplevel(parent)
     top.title("Sélectionnez un login")
+    # Centrage par rapport au parent s'il est fourni
+    if parent is not None:
+        parent.update_idletasks()
+        parent_x = parent.winfo_rootx()
+        parent_y = parent.winfo_rooty()
+        parent_width = parent.winfo_width()
+        parent_height = parent.winfo_height()
+        top_width = 300
+        top_height = 150
+        pos_x = parent_x + (parent_width - top_width) // 2
+        pos_y = parent_y + (parent_height - top_height) // 2
+        top.geometry(f"{top_width}x{top_height}+{pos_x}+{pos_y}")
+    else:
+        top.geometry("300x150")
+    
     tk.Label(top, text="Choisissez un login:", font=("Segoe Script", 12)).pack(padx=10, pady=10)
     var = tk.StringVar(value=options[0])
     combo = ttk.Combobox(top, textvariable=var, values=options, state="readonly", font=("Segoe Script", 12))
@@ -681,7 +696,7 @@ class RDPApp(tk.Tk):
             # Extraire les logins en supprimant les espaces superflus
             available_logins = [u.strip() for u in row[2].split(',') if u.strip()]
             if len(available_logins) > 1:
-                selected_login = ask_login_selection(available_logins)
+                selected_login = ask_login_selection(available_logins, parent=self)
         if pwd_provided is None:
             pwd = simpledialog.askstring(t("password"), f"{t('enter_password_for')} {selected_login}:", show="*", parent=self)
         else:
