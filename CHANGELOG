@@ -1,11 +1,4 @@
-- Added treeview by groups
-- Added context menu
-- Fix double click on note for check / modify
-- Fix false error when connecting
-- Fix loading screen
-- Added possibility to add new connection when using rdp link in web
-- Fix only 1 instance when using rdp link in web
-- fix pop-up update if you use password for SwiftRDP
-- Improve connection when using rdp link in web don't need to use login if the connexion exist on your interface
-- Improve title RDP connection
-- fix loading update on the good screen and in center
+- Added a field to connect without necessarily adding the connection
+- Prompt to add the connection after closing RDP
+- Added the ability to register multiple users for a connection
+- Prompt to choose which user to connect with (if multiple users)
