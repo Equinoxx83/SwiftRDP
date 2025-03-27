@@ -3,3 +3,5 @@
 - Added the ability to register multiple users for a connection
 - Prompt to choose which user to connect with (if multiple users)
 - fix prompt in center of screen "select user"
+- Fix multiple connection (tempory and not temporary)
+- Added check if this IP exist after a connection temporary (no prompt for adding if existing)
