@@ -637,6 +637,7 @@ class RDPApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.connection_in_progress = False
+        self.temp_connections = {}
         self.theme = get_theme()
         self.logo = tk.PhotoImage(file=ICON_FILE)
         self.iconphoto(False, self.logo)
@@ -684,10 +685,10 @@ class RDPApp(tk.Tk):
         self.handle_rdp_link(ip)
     
     def connect_connection(self, row, pwd_provided=None, temporary=False):
-        if self.connection_in_progress:
-            return
+        #if self.connection_in_progress:
+         #   return
         if row is None:
-            self.connection_in_progress = False
+            #self.connection_in_progress = False
             return
         self.connection_in_progress = True
         timeout = 15
@@ -780,6 +781,7 @@ class RDPApp(tk.Tk):
             threading.Thread(target=check_window, daemon=True).start()
         else:
             # --- Branche pour une connexion temporaire ---
+            self.temp_connections[row[1]] = {'row': row, 'proc': proc}
             def check_temp_connection():
                 start_time = time.time()
                 found = False
@@ -797,17 +799,16 @@ class RDPApp(tk.Tk):
                 if found:
                     # Attendre la fin du processus (c'est-à-dire la fermeture de la fenêtre RDP)
                     proc.wait()
-                    self.after(0, lambda: self.prompt_save_temporary(row))
+                    if row[1] in self.temp_connections:
+                        del self.temp_connections[row[1]]
+                    # Vérifier si une connexion avec cette IP est déjà enregistrée
+                    existing = [r for r in load_connections() if r[1] == row[1]]
+                    if not existing:
+                        self.after(0, lambda: self.prompt_save_temporary(row))
                 else:
                     self.after(0, lambda: messagebox.showerror(t("error"), t("connection_failed"), parent=self))
-                self.connection_in_progress = False
                 self.configure(bg=self.theme["bg"])
             threading.Thread(target=check_temp_connection, daemon=True).start()
-
-
-    
-        
-
 
     def wait_for_temp_connection(self, proc, row):
         proc.wait()  # Attend la fin du processus xfreerdp
@@ -816,8 +817,12 @@ class RDPApp(tk.Tk):
         self.configure(bg=self.theme["bg"])
 
     def prompt_save_temporary(self, row):
+        # Si une connexion avec cette IP existe déjà, ne rien faire
+        if any(r[1] == row[1] for r in load_connections()):
+            return
         if messagebox.askyesno(t("confirm"), "Souhaitez-vous enregistrer cette connexion ?", parent=self):
             self.add_connection(prefill_ip=row[1], prefill_login=row[2], callback=False)
+
 
 
     def handle_rdp_link(self, ip):
