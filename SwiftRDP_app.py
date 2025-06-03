@@ -1,18 +1,48 @@
 #!/usr/bin/env python3
+import re
+import webbrowser
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
-import subprocess, os, zipfile, shutil, tempfile, threading, time, webbrowser, sys, hashlib, socket, fcntl
+import subprocess, os, zipfile, shutil, tempfile, threading, time, sys, hashlib, socket, fcntl
 from datetime import datetime
 from functools import partial
+import itertools
+from base64 import b64encode, b64decode
 
 # Seuil pour considérer un double-clic rapide (en millisecondes)
 DOUBLE_CLICK_THRESHOLD = 250
 
 ######################################
-# Fonction de hashage du mot de passe
+# Fonction de hashage du mot de passe (application principale)
 ######################################
 def hash_password(password):
     return hashlib.sha256(password.encode('utf-8')).hexdigest()
+
+######################################
+# Clé et fonctions de chiffrement/déchiffrement pour les mots de passe RDP
+######################################
+_XOR_KEY = 0x5A
+
+def encrypt_password(clear_text: str) -> str:
+    """
+    Chiffre la chaîne 'clear_text' avec XOR + base64 pour masquer le mot de passe dans le fichier.
+    """
+    raw = clear_text.encode("utf-8")
+    xored = bytes(b ^ _XOR_KEY for b in raw)
+    return b64encode(xored).decode("utf-8")
+
+def decrypt_password(cipher_text: str) -> str:
+    """
+    Déchiffre la chaîne chiffrée précédemment par encrypt_password.
+    """
+    if not cipher_text:
+        return ""
+    try:
+        xored = b64decode(cipher_text.encode("utf-8"))
+        raw = bytes(b ^ _XOR_KEY for b in xored)
+        return raw.decode("utf-8")
+    except Exception:
+        return ""
 
 ######################################
 # Traductions et fonction t
@@ -376,6 +406,10 @@ def ask_login_selection(options, parent=None):
     return result[0] if result else options[0]
 
 def load_connections():
+    """
+    Lit le fichier connexions.txt et renvoie une liste de listes :
+    [Nom, IP, Login(s), Dernière connexion, Note, Groupe, MotDePasseChiffre]
+    """
     conns = []
     with open(FILE_CONNS, "r", encoding="utf-8") as f:
         for line in f:
@@ -383,17 +417,25 @@ def load_connections():
             if not line:
                 continue
             parts = line.split("|")
+            # Restaurer les sauts de ligne dans la note
             if len(parts) >= 5:
                 parts[4] = parts[4].replace("<NL>", "\n")
-            while len(parts) < 6:
+            # S'assurer qu'il y a au moins 7 champs (ajouter vides sinon)
+            while len(parts) < 7:
                 parts.append("")
             conns.append(parts)
     return conns
 
 def save_connections(data):
+    """
+    Écrit la liste 'data' (listes de 7 éléments) dans connexions.txt.    
+    """
     with open(FILE_CONNS, "w", encoding="utf-8") as f:
         for row in data:
+            # Remplacer les sauts de ligne dans la note par <NL>
             row[4] = row[4].replace("\n", "<NL>")
+            while len(row) < 7:
+                row.append("")
             f.write("|".join(row) + "\n")
 
 def update_connection_by_value(original_row, new_row):
@@ -478,21 +520,37 @@ def delete_configuration():
     app.refresh_table()
 
 def refresh_table_global(app):
-    for i in app.tree.get_children():
-        app.tree.delete(i)
+    # Vider l'arbre
+    for iid in app.tree.get_children():
+        app.tree.delete(iid)
+
     data = load_connections()
-    filter_text = app.search_var.get().lower()
-    if filter_text:
-        data = [row for row in data if any(filter_text in str(field).lower() for field in row)]
-    groups = {}
+    filtre = app.search_var.get().lower()
+    if filtre:
+        data = [row for row in data if any(filtre in str(field).lower() for field in row)]
+
+    # Regrouper par nom de groupe
+    groupes = {}
     for row in data:
         grp = row[5] if row[5] else "Sans groupe"
-        groups.setdefault(grp, []).append(row)
-    for grp in sorted(groups.keys(), key=lambda g: g.lower()):
-        rows = sorted(groups[grp], key=lambda r: r[0].lower())
+        groupes.setdefault(grp, []).append(row)
+
+    url_pattern = r'https?://[^\s]+'  # http:// ou https:// jusqu'à un espace
+
+    for grp in sorted(groupes.keys(), key=lambda g: g.lower()):
         parent_id = app.tree.insert("", "end", text=grp, open=True)
-        for row in rows:
-            app.tree.insert(parent_id, "end", text=row[0], values=(row[1], row[2], row[3], format_note(row[4])))
+        for row in sorted(groupes[grp], key=lambda r: r[0].lower()):
+            note_complete = row[4] or ""
+            note_affichage = format_note(note_complete)
+
+            # Si la note contient au moins une URL, on met le tag "has_url"
+            has_link = True if re.search(url_pattern, note_complete) else False
+            tags = ("has_url",) if has_link else ()
+
+            app.tree.insert(parent_id, "end",
+                            text=row[0],
+                            values=(row[1], row[2], row[3], note_affichage),
+                            tags=tags)
 
 def treeview_sort_column(tv, col, reverse):
     data = [(tv.set(k, col), k) for k in tv.get_children('')]
@@ -636,6 +694,7 @@ def update_app(app, repo_url, remote_version):
 class RDPApp(tk.Tk):
     def __init__(self):
         super().__init__()
+        self.note_tooltip = None
         self.connection_in_progress = False
         self.temp_connections = {}
         self.theme = get_theme()
@@ -665,60 +724,161 @@ class RDPApp(tk.Tk):
         self.last_click_time = event.time
     
     def handle_double_click(self, event):
+        # Pour ne pas réagir aux double‐clics trop lents
         if (event.time - self.last_click_time) > DOUBLE_CLICK_THRESHOLD:
             return
+
+        # Récupère la ligne et la colonne cliquées
         row = self.get_selected_row()
         if row is None:
             return
+
         col = self.tree.identify_column(event.x)
-        if col == "#4":
-            self.edit_connection_note(row)
+        if col == "#4":  # colonne "Note"
+            note = row[4] or ""
+            # Pattern pour trouver la première URL (http:// ou https://…)
+            url_pattern = r'https?://[^\s]+'
+            match = re.search(url_pattern, note)
+            if match:
+                webbrowser.open(match.group())
+            else:
+                # Pas d’URL : on bascule sur l’édition de la note
+                self.edit_connection_note(row)
         else:
+            # Si ce n’est pas la colonne Note, on lance la connexion
             self.connect_connection(row)
-    
+
+    def on_tree_motion(self, event):
+        # Dès que la souris bouge sur le Treeview, on regarde s'il y a une URL sous le curseur.
+        iid = self.tree.identify_row(event.y)
+        col = self.tree.identify_column(event.x)
+        # Si on n'est pas sur une ligne valide, ou pas sur la colonne Note ("#4"), on masque le tooltip.
+        if not iid or col != "#4":
+            self.hide_note_tooltip()
+            return
+
+        item = self.tree.item(iid)
+        # Si ce n'est pas une "vraie" connexion (ex. en-tête de groupe), on sort.
+        if not item.get("values"):
+            self.hide_note_tooltip()
+            return
+
+        # Récupérer le nom de la connexion (colonne "#0"), puis chercher la ligne correspondante.
+        name = item["text"]
+        note = ""
+        for row in load_connections():
+            if row[0] == name:
+                note = row[4] or ""
+                break
+
+        # On cherche la première URL "http://…" ou "https://…"
+        match = re.search(r"https?://[^\s]+", note)
+        if not match:
+            self.hide_note_tooltip()
+            return
+
+        url = match.group()
+        # Position du tooltip : un peu décalé par rapport au curseur
+        x = event.x_root + 10
+        y = event.y_root + 10
+        self.show_note_tooltip(url, x, y)
+
+    def show_note_tooltip(self, url, x, y):
+        # Si on a déjà un tooltip, et qu'il affiche la même URL, on ne recrée pas tout, on repositionne juste.
+        if self.note_tooltip and getattr(self.note_tooltip, "current_url", None) == url:
+            try:
+                self.note_tooltip.geometry(f"+{x}+{y}")
+            except:
+                pass
+            return
+
+        # Sinon, on détruit l'ancien (s'il existe) et on en crée un nouveau.
+        self.hide_note_tooltip()
+
+        tw = tk.Toplevel(self)
+        tw.overrideredirect(True)            # pas de bordure
+        tw.attributes("-topmost", True)      # toujours devant
+        tw.current_url = url                 # on garde l'URL dans un attribut
+
+        tw.configure(bg="white")
+
+        lbl = tk.Label(tw,
+                       text=url,
+                       fg="blue",
+                       cursor="hand2",
+                       font=("Segoe Script", 10, "underline"),
+                       bg="white")
+        lbl.pack(padx=2, pady=2)
+
+        lbl.bind("<Button-1>", lambda e: webbrowser.open(url))
+
+        tw.bind("<FocusOut>", lambda e: self.hide_note_tooltip())
+
+        tw.geometry(f"+{x}+{y}")
+        self.note_tooltip = tw
+
+    def hide_note_tooltip(self):
+        if self.note_tooltip:
+            try:
+                self.note_tooltip.destroy()
+            except:
+                pass
+            self.note_tooltip = None
+
     def reset_treeview_style(self):
         apply_custom_treeview_style()
         self.tree.configure(style="My.Treeview")
-    
+
     def prompt_rdp_connection(self, ip):
         # Pour compatibilité, cette méthode n'est plus utilisée lors du lancement.
         self.handle_rdp_link(ip)
-    
+
     def connect_connection(self, row, pwd_provided=None, temporary=False):
-        #if self.connection_in_progress:
-         #   return
+        """
+        Lance la connexion RDP. Si un mot de passe chiffré (row[6]) est présent,
+        on le déchiffre et on l'utilise. Sinon, on demande à l'utilisateur.
+        """
         if row is None:
-            #self.connection_in_progress = False
             return
         self.connection_in_progress = True
         timeout = 15
         selected_login = row[2]
         if ',' in row[2]:
-            # Extraire les logins en supprimant les espaces superflus
             available_logins = [u.strip() for u in row[2].split(',') if u.strip()]
             if len(available_logins) > 1:
                 selected_login = ask_login_selection(available_logins, parent=self)
-        if pwd_provided is None:
-            pwd = simpledialog.askstring(t("password"), f"{t('enter_password_for')} {selected_login}:", show="*", parent=self)
-        else:
+
+        # Détermination du mot de passe à utiliser
+        if pwd_provided is not None:
             pwd = pwd_provided
+        else:
+            saved_cipher = row[6]
+            if saved_cipher:
+                pwd = decrypt_password(saved_cipher)
+            else:
+                pwd = simpledialog.askstring(
+                    t("password"),
+                    f"{t('enter_password_for')} {selected_login}:",
+                    show="*",
+                    parent=self
+                )
         if not pwd:
             messagebox.showerror(t("error"), t("no_password"), parent=self)
             self.connection_in_progress = False
             return
-                # Lancement de la connexion via xfreerdp
+
         try:
             proc = subprocess.Popen(
                 ["xfreerdp", f"/v:{row[1]}", f"/u:{selected_login}", f"/p:{pwd}",
                  "/dynamic-resolution", "/cert-ignore", f"/title:SwiftRDP - {row[0]} ({row[1]})"],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, start_new_session=True)
+                text=True, start_new_session=True
+            )
         except Exception as e:
             messagebox.showerror(t("error"), f"{t('launch_error')}:\n{e}", parent=self)
             self.connection_in_progress = False
             return
 
-        # Définition commune de la barre de progression
         main_x = self.winfo_x()
         main_y = self.winfo_y()
         main_width = self.winfo_width()
@@ -740,7 +900,7 @@ class RDPApp(tk.Tk):
         style.configure("grey.Horizontal.TProgressbar", foreground="grey", background="grey")
         pb = ttk.Progressbar(progress_win, mode="determinate", maximum=100, style="grey.Horizontal.TProgressbar")
         pb.pack(fill=tk.X, padx=20, pady=10)
-        
+
         def update_progress(count=0):
             if progress_win.winfo_exists():
                 if count <= 100:
@@ -752,7 +912,6 @@ class RDPApp(tk.Tk):
         update_progress()
 
         if not temporary:
-            # --- Branche pour une connexion classique ---
             def check_window():
                 start_time = time.time()
                 found = False
@@ -780,7 +939,6 @@ class RDPApp(tk.Tk):
                 self.configure(bg=self.theme["bg"])
             threading.Thread(target=check_window, daemon=True).start()
         else:
-            # --- Branche pour une connexion temporaire ---
             self.temp_connections[row[1]] = {'row': row, 'proc': proc}
             def check_temp_connection():
                 start_time = time.time()
@@ -797,11 +955,9 @@ class RDPApp(tk.Tk):
                 if progress_win.winfo_exists():
                     progress_win.destroy()
                 if found:
-                    # Attendre la fin du processus (c'est-à-dire la fermeture de la fenêtre RDP)
                     proc.wait()
                     if row[1] in self.temp_connections:
                         del self.temp_connections[row[1]]
-                    # Vérifier si une connexion avec cette IP est déjà enregistrée
                     existing = [r for r in load_connections() if r[1] == row[1]]
                     if not existing:
                         self.after(0, lambda: self.prompt_save_temporary(row))
@@ -811,32 +967,26 @@ class RDPApp(tk.Tk):
             threading.Thread(target=check_temp_connection, daemon=True).start()
 
     def wait_for_temp_connection(self, proc, row):
-        proc.wait()  # Attend la fin du processus xfreerdp
+        proc.wait()
         self.after(0, lambda: self.prompt_save_temporary(row))
         self.connection_in_progress = False
         self.configure(bg=self.theme["bg"])
 
     def prompt_save_temporary(self, row):
-        # Si une connexion avec cette IP existe déjà, ne rien faire
         if any(r[1] == row[1] for r in load_connections()):
             return
         if messagebox.askyesno(t("confirm"), "Souhaitez-vous enregistrer cette connexion ?", parent=self):
             self.add_connection(prefill_ip=row[1], prefill_login=row[2], callback=False)
 
-
-
     def handle_rdp_link(self, ip):
-        # Ramener la fenêtre de l'application au premier plan
         self.deiconify()
         self.lift()
         self.focus_force()
         conns = load_connections()
         for row in conns:
             if row[1] == ip:
-                # Si l'IP est déjà enregistrée, demande de se connecter
                 self.connect_connection(row)
                 return
-        # Si l'IP n'existe pas, proposer d'ajouter la connexion ou se connecter temporairement
         if messagebox.askyesno(t("confirm"), f"L'IP {ip} n'existe pas. Voulez-vous l'ajouter ?", parent=self):
             self.add_connection(prefill_ip=ip, callback=True)
         else:
@@ -844,10 +994,10 @@ class RDPApp(tk.Tk):
             if not login:
                 messagebox.showerror("Erreur", "Login requis.", parent=self)
                 return
-            temp_row = [ip, ip, login, "N/A", "", ""]
+            temp_row = [ip, ip, login, "N/A", "", "", ""]
             self.connect_connection(temp_row, temporary=True)
-    
-    # Modification de add_connection pour accepter des valeurs pré-remplies et un callback
+
+    # Modification de add_connection pour accepter mot de passe
     def add_connection(self, prefill_ip=None, prefill_login=None, callback=False):
         if window_exists(self, t("add_connection_title")):
             return
@@ -855,487 +1005,93 @@ class RDPApp(tk.Tk):
         top.transient(self)
         top.iconphoto(False, self.logo)
         top.title(t("add_connection_title"))
-        top.geometry("825x300")
+        top.geometry("825x350")
         top.configure(bg=self.theme["bg"])
         top.resizable(False, False)
-        tk.Label(top, text=t("name"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"]).grid(row=0, column=0, padx=15, pady=8, sticky="e")
-        e_name = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"], relief="flat", width=50)
+
+        # Nom
+        tk.Label(top, text=t("name"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"])\
+          .grid(row=0, column=0, padx=15, pady=8, sticky="e")
+        e_name = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"],
+                          relief="flat", width=50)
         e_name.grid(row=0, column=1, padx=15, pady=8, sticky="w")
-        tk.Label(top, text=t("ip"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"]).grid(row=1, column=0, padx=15, pady=8, sticky="e")
-        e_ip = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"], relief="flat", width=50)
+
+        # IP
+        tk.Label(top, text=t("ip"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"])\
+           .grid(row=1, column=0, padx=15, pady=8, sticky="e")
+        e_ip = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"],
+                        relief="flat", width=50)
         if prefill_ip:
             e_ip.insert(0, prefill_ip)
         e_ip.grid(row=1, column=1, padx=15, pady=8, sticky="w")
-        tk.Label(top, text="Login:", font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"])\
-            .grid(row=..., column=0, padx=15, pady=8, sticky="e")
-        e_login = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"], relief="flat", width=50)
+
+        # Login(s)
+        tk.Label(top, text=t("login"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"])\
+          .grid(row=2, column=0, padx=15, pady=8, sticky="e")
+        e_login = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"],
+                           relief="flat", width=50)
         if prefill_login:
             e_login.insert(0, prefill_login)
         e_login.grid(row=2, column=1, padx=15, pady=8, sticky="w")
-        tk.Label(top, text=t("group"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"]).grid(row=3, column=0, padx=15, pady=8, sticky="e")
+
+        # Mot de passe RDP
+        tk.Label(top, text="Mot de passe :", font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"])\
+          .grid(row=3, column=0, padx=15, pady=8, sticky="e")
+        e_password = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"],
+                              relief="flat", width=50, show="*")
+        e_password.grid(row=3, column=1, padx=15, pady=8, sticky="w")
+
+        # Groupe (poussé à row=4)
+        tk.Label(top, text=t("group"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"])\
+          .grid(row=4, column=0, padx=15, pady=8, sticky="e")
         existing_groups = get_existing_groups()
         group_var = tk.StringVar()
         group_options = existing_groups if existing_groups else []
         group_frame = tk.Frame(top, bg=self.theme["bg"])
-        group_frame.grid(row=3, column=1, padx=15, pady=8, sticky="w")
-        group_cb = ttk.Combobox(group_frame, textvariable=group_var, values=group_options, font=("Segoe Script", 12), width=45, state="readonly")
+        group_frame.grid(row=4, column=1, padx=15, pady=8, sticky="w")
+        group_cb = ttk.Combobox(group_frame, textvariable=group_var,
+                                values=group_options, font=("Segoe Script", 12),
+                                width=45, state="readonly")
         group_cb.grid(row=0, column=0, sticky="w")
         btn_group = tk.Button(group_frame, text="+", command=lambda: self.add_group(top, group_cb, group_var),
-                              font=("Segoe Script", 10), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=1)
+                              font=("Segoe Script", 10), bg=self.theme["button_bg"], fg=self.theme["button_fg"],
+                              relief="flat", width=1)
         btn_group.grid(row=0, column=1, padx=(5,0), sticky="w")
+
+        # Champ Note (row=5)
         top.note = ""
         note_frame = tk.Frame(top, bg=self.theme["bg"])
-        note_frame.grid(row=4, column=0, columnspan=2, pady=8)
+        note_frame.grid(row=5, column=0, columnspan=2, pady=8)
         tk.Button(note_frame, text=t("add_note"), command=lambda: self.open_note_window(top),
-                  font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=20).pack(pady=5)
+                  font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"],
+                  relief="flat", width=20).pack(pady=5)
+
+        # Boutons Sauver / Retour (row=6)
         btn_frame_top = tk.Frame(top, bg=self.theme["bg"])
-        btn_frame_top.grid(row=5, column=0, columnspan=2, pady=8)
+        btn_frame_top.grid(row=6, column=0, columnspan=2, pady=8)
+
         def save_and_callback():
-            self.save_new_connection(top, e_name, e_ip, e_login, group_var, top.note)
+            self.save_new_connection(top, e_name, e_ip, e_login, e_password, group_var, top.note)
             if callback:
                 if messagebox.askyesno(t("confirm"), "Souhaitez-vous vous connecter à cette nouvelle connexion ?", parent=self):
                     new_row = load_connections()[-1]
                     self.connect_connection(new_row)
+
         tk.Button(btn_frame_top, text=t("save"), command=save_and_callback,
-                  font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=15, expand=True)
+                  font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"],
+                  relief="flat", width=12).pack(side=tk.LEFT, padx=15, expand=True)
         tk.Button(btn_frame_top, text=t("return"), command=top.destroy,
-                  font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=15, expand=True)
-    
-    def handle_rdp_link(self, ip):
-        self.lift()
-        self.focus_force()
-        conns = load_connections()
-        for row in conns:
-            if row[1] == ip:
-                # L'IP existe : demande de mot de passe pour se connecter
-                self.connect_connection(row)
-                return
-        # L'IP n'existe pas : proposer d'ajouter ou de se connecter temporairement
-        if messagebox.askyesno(t("confirm"), f"L'IP {ip} n'existe pas. Voulez-vous l'ajouter ?", parent=self):
-            # Ouvrir la fenêtre d'ajout avec IP pré-remplie
-            self.add_connection(prefill_ip=ip, callback=True)
-        else:
-            # Se connecter temporairement sans enregistrement
-            login = simpledialog.askstring("Login", "Entrez votre login :", parent=self)
-            if not login:
-                messagebox.showerror("Erreur", "Login requis.", parent=self)
-                return
-            temp_row = [ip, ip, login, "N/A", "", ""]
-            self.connect_connection(temp_row, temporary=True)
-    
-    def show_patch_note_dialog(self, content, show_checkbox=True):
-        dialog = tk.Toplevel(self)
-        dialog.transient(self)
-        dialog.grab_set()
-        dialog.attributes("-topmost", True)
-        dialog.iconphoto(False, self.logo)
-        dialog.title(t("patch_note"))
-        dialog.geometry("800x600")
-        dialog.configure(bg=self.theme["bg"])
-        text = tk.Text(dialog, wrap=tk.WORD, font=self.font_main,
-                       bg=self.theme["entry_bg"], fg=self.theme["fg"])
-        text.insert(tk.END, content)
-        text.config(state="disabled")
-        text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        var_hide = tk.BooleanVar()
-        if show_checkbox:
-            check = tk.Checkbutton(dialog, text=t("dont_show_again"), variable=var_hide,
-                                     bg=self.theme["bg"], fg=self.theme["fg"], font=("Segoe Script", 14),
-                                     selectcolor="lightblue")
-            check.pack(anchor="w", padx=10, pady=5)
-        def close_dialog():
-            if show_checkbox and var_hide.get():
-                with open(CHANGELOG_HIDE, "w", encoding="utf-8") as f:
-                    f.write(read_patch_note())
-            dialog.destroy()
-        tk.Button(dialog, text=t("return"), command=close_dialog, font=self.font_main,
-                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(pady=10)
-        dialog.attributes("-topmost", False)
-    
-    def add_group(self, parent, combobox, var):
-        new_grp = simpledialog.askstring(t("new_group"), t("enter_new_group"), parent=parent)
-        if new_grp:
-            groups = get_existing_groups()
-            if new_grp not in groups:
-                groups.append(new_grp)
-                with open(GROUPS_FILE, "a", encoding="utf-8") as gf:
-                    gf.write(new_grp + "\n")
-            combobox["values"] = groups
-            var.set(new_grp)
-    
-    def create_widgets(self):
-        self.theme = get_theme()
-        apply_custom_treeview_style()
-        search_frame = tk.Frame(self, bg=self.theme["bg"])
-        search_frame.pack(fill=tk.X, padx=15, pady=10)
-        tk.Label(search_frame, text=t("search"), font=self.font_main, bg=self.theme["bg"], fg=self.theme["fg"]).pack(side=tk.LEFT)
-        self.search_var = tk.StringVar()
-        self.search_var.trace("w", lambda *args: self.refresh_table())
-        tk.Entry(search_frame, textvariable=self.search_var, font=self.font_main, bg=self.theme["entry_bg"],
-                 fg=self.theme["fg"], insertbackground=self.theme["fg"], relief="flat").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
-       # Panneau de connexion temporaire (bouton "Connexion" élargi + champs de saisie réduits)
-        temp_frame = tk.Frame(self, bg=self.theme["bg"])
-        temp_frame.pack(padx=15, pady=5, anchor="center")
+                  font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"],
+                  relief="flat", width=12).pack(side=tk.LEFT, padx=15, expand=True)
 
-        # Bouton "Connexion" élargi
-        conn_button = tk.Button(temp_frame, text="Connexion", font=self.font_main,
-                                bg=self.theme["button_bg"], fg=self.theme["button_fg"],
-                                relief="flat", command=self.connect_temporary, width=13)
-        conn_button.grid(row=0, column=0, padx=5, pady=5)
-
-        # Label et champ IP (largeur fixée)
-        ip_label = tk.Label(temp_frame, text="IP :", font=self.font_main,
-                            bg=self.theme["bg"], fg=self.theme["fg"])
-        ip_label.grid(row=0, column=1, padx=5, pady=5, sticky="e")
-        self.temp_ip_var = tk.StringVar()
-        ip_entry = tk.Entry(temp_frame, textvariable=self.temp_ip_var, font=self.font_main,
-                            bg=self.theme["entry_bg"], fg=self.theme["fg"], relief="flat", width=35)
-        ip_entry.grid(row=0, column=2, padx=5, pady=5, sticky="w")
-
-        # Label et champ Login (largeur fixée)
-        login_label = tk.Label(temp_frame, text="Login :", font=self.font_main,
-                               bg=self.theme["bg"], fg=self.theme["fg"])
-        login_label.grid(row=0, column=3, padx=5, pady=5, sticky="e")
-        self.temp_login_var = tk.StringVar()
-        login_entry = tk.Entry(temp_frame, textvariable=self.temp_login_var, font=self.font_main,
-                               bg=self.theme["entry_bg"], fg=self.theme["fg"], relief="flat", width=35)
-        login_entry.grid(row=0, column=4, padx=5, pady=5, sticky="w")
-
-        columns = ("IP", "Login", "Dernière connexion", "Note")
-        self.tree = ttk.Treeview(self, style="My.Treeview", columns=columns, show="tree headings", selectmode="browse")
-        self.tree.heading("#0", text="Nom")
-        self.tree.column("#0", width=300)
-        self.tree.heading("IP", text="IP")
-        self.tree.column("IP", width=150)
-        self.tree.heading("Login", text="Login")
-        self.tree.column("Login", width=150)
-        self.tree.heading("Dernière connexion", text="Dernière connexion")
-        self.tree.column("Dernière connexion", width=200)
-        self.tree.heading("Note", text="Note")
-        self.tree.column("Note", width=300)
-        self.tree.pack(fill=tk.BOTH, expand=True, padx=15, pady=10)
-        self.tree.bind("<Button-3>", lambda event: show_context_menu(self, event))
-        btn_frame = tk.Frame(self, bg=self.theme["bg"])
-        btn_frame.pack(fill=tk.X, padx=15, pady=10)
-        btn_texts = [t("connect"), t("add"), t("modify"), t("delete"), t("manage_groups"), t("options")]
-        btn_commands = [self.action_connect, self.action_add, self.action_modify, self.action_delete, self.manage_groups, self.options_menu]
-        for i, (txt, cmd) in enumerate(zip(btn_texts, btn_commands)):
-            tk.Button(btn_frame, text=txt, command=cmd, font=self.font_main,
-                      bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat").grid(row=0, column=i, padx=10, sticky="ew")
-        for i in range(len(btn_texts)):
-            btn_frame.grid_columnconfigure(i, weight=1)
-    
-    def refresh_table(self):
-        refresh_table_global(self)
-    
-    def get_selected_row(self):
-        sel = self.tree.selection()
-        if not sel:
-            messagebox.showinfo(t("info"), t("select_connection"), parent=self)
-            return None
-        item = self.tree.item(sel[0])
-        if item.get("values"):
-            full_data = load_connections()
-            for row in full_data:
-                if row[0] == item["text"]:
-                    return row
-        else:
-            messagebox.showinfo(t("info"), "Veuillez sélectionner une connexion (pas un groupe).", parent=self)
-            return None
-    
-    def action_connect(self):
-        row = self.get_selected_row()
-        if row:
-            self.connect_connection(row)
-    
-    def action_add(self):
-        if window_exists(self, t("add_connection_title")):
-            return
-        self.add_connection()
-    
-    def action_modify(self):
-        row = self.get_selected_row()
-        if row:
-            if window_exists(self, t("modify_connection_title")):
-                return
-            self.modify_connection(row)
-    
-    def action_delete(self):
-        row = self.get_selected_row()
-        if row and messagebox.askyesno(t("confirm"), f"{t('delete_connection')} {row[0]} ?", parent=self):
-            delete_connection((row[0], row[5]))
-            messagebox.showinfo(t("info"), t("connection_deleted"), parent=self)
-            self.refresh_table()
-    
-    def edit_connection_note(self, row):
-        if window_exists(self, t("modify_note_title")):
-            return
-        top = tk.Toplevel(self)
-        top.transient(self)
-        top.iconphoto(False, self.logo)
-        top.title(t("modify_note_title"))
-        top.geometry("600x350")
-        top.configure(bg=self.theme["bg"])
-        tk.Label(top, text=f"{t('note_for')} {row[0]}:", font=("Segoe Script", 12),
-                 bg=self.theme["bg"], fg=self.theme["button_fg"]).pack(pady=10)
-        text = tk.Text(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"],
-                        wrap=tk.WORD, height=10, width=70, relief="flat")
-        text.insert(tk.END, row[4])
-        text.pack(padx=20, pady=10, fill=tk.BOTH, expand=True)
-        btn_frame = tk.Frame(top, bg=self.theme["bg"])
-        btn_frame.pack(pady=20)
-        tk.Button(btn_frame, text=t("save"), command=lambda: self.save_note(top, text, row),
-                  font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=20, expand=True)
-        tk.Button(btn_frame, text=t("return"), command=top.destroy,
-                  font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=20, expand=True)
-    
-    def save_note(self, top, text, row):
-        new_note = text.get("1.0", tk.END).strip()
-        new_row = row.copy()
-        new_row[4] = new_note
-        update_connection_by_value(row, new_row)
-        messagebox.showinfo(t("info"), "Note mise à jour.", parent=top)
-        top.destroy()
-        self.refresh_table()
-
-    def connect_temporary(self):
-        ip = self.temp_ip_var.get().strip()
-        login = self.temp_login_var.get().strip()
-        if not ip or not login:
-            messagebox.showerror(t("error"), "IP et Login sont requis pour une connexion.", parent=self)
-            return
-        temp_row = [ip, ip, login, "N/A", "", ""]
-        self.connect_connection(temp_row, temporary=True)
-    
-    def handle_rdp_link(self, ip):
-        self.lift()
-        self.focus_force()
-        conns = load_connections()
-        for row in conns:
-            if row[1] == ip:
-                self.connect_connection(row)
-                return
-        if messagebox.askyesno(t("confirm"), f"L'IP {ip} n'existe pas. Voulez-vous l'ajouter ?", parent=self):
-            self.add_connection(prefill_ip=ip, callback=True)
-        else:
-            login = simpledialog.askstring("Login", "Entrez votre login :", parent=self)
-            if not login:
-                messagebox.showerror("Erreur", "Login requis.", parent=self)
-                return
-            temp_row = [ip, ip, login, "N/A", "", ""]
-            self.connect_connection(temp_row, temporary=True)
-    
-    def show_patch_note_dialog(self, content, show_checkbox=True):
-        dialog = tk.Toplevel(self)
-        dialog.transient(self)
-        dialog.grab_set()
-        dialog.attributes("-topmost", True)
-        dialog.iconphoto(False, self.logo)
-        dialog.title(t("patch_note"))
-        dialog.geometry("800x600")
-        dialog.configure(bg=self.theme["bg"])
-        text = tk.Text(dialog, wrap=tk.WORD, font=self.font_main,
-                       bg=self.theme["entry_bg"], fg=self.theme["fg"])
-        text.insert(tk.END, content)
-        text.config(state="disabled")
-        text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        var_hide = tk.BooleanVar()
-        if show_checkbox:
-            check = tk.Checkbutton(dialog, text=t("dont_show_again"), variable=var_hide,
-                                     bg=self.theme["bg"], fg=self.theme["fg"], font=("Segoe Script", 14),
-                                     selectcolor="lightblue")
-            check.pack(anchor="w", padx=10, pady=5)
-        def close_dialog():
-            if show_checkbox and var_hide.get():
-                with open(CHANGELOG_HIDE, "w", encoding="utf-8") as f:
-                    f.write(read_patch_note())
-            dialog.destroy()
-        tk.Button(dialog, text=t("return"), command=close_dialog, font=self.font_main,
-                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(pady=10)
-        dialog.attributes("-topmost", False)
-    
-    def add_group(self, parent, combobox, var):
-        new_grp = simpledialog.askstring(t("new_group"), t("enter_new_group"), parent=parent)
-        if new_grp:
-            groups = get_existing_groups()
-            if new_grp not in groups:
-                groups.append(new_grp)
-                with open(GROUPS_FILE, "a", encoding="utf-8") as gf:
-                    gf.write(new_grp + "\n")
-            combobox["values"] = groups
-            var.set(new_grp)
-    
-    def refresh_table(self):
-        refresh_table_global(self)
-    
-    def get_selected_row(self):
-        sel = self.tree.selection()
-        if not sel:
-            messagebox.showinfo(t("info"), t("select_connection"), parent=self)
-            return None
-        item = self.tree.item(sel[0])
-        if item.get("values"):
-            full_data = load_connections()
-            for row in full_data:
-                if row[0] == item["text"]:
-                    return row
-        else:
-            messagebox.showinfo(t("info"), "Veuillez sélectionner une connexion (pas un groupe).", parent=self)
-            return None
-    
-    def action_connect(self):
-        row = self.get_selected_row()
-        if row:
-            self.connect_connection(row)
-    
-    def action_add(self):
-        if window_exists(self, t("add_connection_title")):
-            return
-        self.add_connection()
-    
-    def action_modify(self):
-        row = self.get_selected_row()
-        if row:
-            if window_exists(self, t("modify_connection_title")):
-                return
-            self.modify_connection(row)
-    
-    def action_delete(self):
-        row = self.get_selected_row()
-        if row and messagebox.askyesno(t("confirm"), f"{t('delete_connection')} {row[0]} ?", parent=self):
-            delete_connection((row[0], row[5]))
-            messagebox.showinfo(t("info"), t("connection_deleted"), parent=self)
-            self.refresh_table()
-    
-    def edit_connection_note(self, row):
-        if window_exists(self, t("modify_note_title")):
-            return
-        top = tk.Toplevel(self)
-        top.transient(self)
-        top.iconphoto(False, self.logo)
-        top.title(t("modify_note_title"))
-        top.geometry("600x350")
-        top.configure(bg=self.theme["bg"])
-        tk.Label(top, text=f"{t('note_for')} {row[0]}:", font=("Segoe Script", 12),
-                 bg=self.theme["bg"], fg=self.theme["button_fg"]).pack(pady=10)
-        text = tk.Text(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"],
-                        wrap=tk.WORD, height=10, width=70, relief="flat")
-        text.insert(tk.END, row[4])
-        text.pack(padx=20, pady=10, fill=tk.BOTH, expand=True)
-        btn_frame = tk.Frame(top, bg=self.theme["bg"])
-        btn_frame.pack(pady=20)
-        tk.Button(btn_frame, text=t("save"), command=lambda: self.save_note(top, text, row),
-                  font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=20, expand=True)
-        tk.Button(btn_frame, text=t("return"), command=top.destroy,
-                  font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=20, expand=True)
-    
-    def save_note(self, top, text, row):
-        new_note = text.get("1.0", tk.END).strip()
-        new_row = row.copy()
-        new_row[4] = new_note
-        update_connection_by_value(row, new_row)
-        messagebox.showinfo(t("info"), "Note mise à jour.", parent=top)
-        top.destroy()
-        self.refresh_table()
-    
-    def add_connection(self, prefill_ip=None, prefill_login=None, callback=False):
-        if window_exists(self, t("add_connection_title")):
-            return
-        top = tk.Toplevel(self)
-        top.transient(self)
-        top.iconphoto(False, self.logo)
-        top.title(t("add_connection_title"))
-        top.geometry("825x300")
-        top.configure(bg=self.theme["bg"])
-        top.resizable(False, False)
-        tk.Label(top, text=t("name"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"]).grid(row=0, column=0, padx=15, pady=8, sticky="e")
-        e_name = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"], relief="flat", width=50)
-        e_name.grid(row=0, column=1, padx=15, pady=8, sticky="w")
-        tk.Label(top, text=t("ip"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"]).grid(row=1, column=0, padx=15, pady=8, sticky="e")
-        e_ip = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"], relief="flat", width=50)
-        if prefill_ip:
-            e_ip.insert(0, prefill_ip)
-        e_ip.grid(row=1, column=1, padx=15, pady=8, sticky="w")
-        tk.Label(top, text=t("login"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"]).grid(row=2, column=0, padx=15, pady=8, sticky="e")
-        e_login = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"], relief="flat", width=50)
-        if prefill_login:
-            e_login.insert(0, prefill_login)
-        e_login.grid(row=2, column=1, padx=15, pady=8, sticky="w")
-        tk.Label(top, text=t("group"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"]).grid(row=3, column=0, padx=15, pady=8, sticky="e")
-        existing_groups = get_existing_groups()
-        group_var = tk.StringVar()
-        group_options = existing_groups if existing_groups else []
-        group_frame = tk.Frame(top, bg=self.theme["bg"])
-        group_frame.grid(row=3, column=1, padx=15, pady=8, sticky="w")
-        group_cb = ttk.Combobox(group_frame, textvariable=group_var, values=group_options, font=("Segoe Script", 12), width=45, state="readonly")
-        group_cb.grid(row=0, column=0, sticky="w")
-        btn_group = tk.Button(group_frame, text="+", command=lambda: self.add_group(top, group_cb, group_var),
-                              font=("Segoe Script", 10), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=1)
-        btn_group.grid(row=0, column=1, padx=(5,0), sticky="w")
-        top.note = ""
-        note_frame = tk.Frame(top, bg=self.theme["bg"])
-        note_frame.grid(row=4, column=0, columnspan=2, pady=8)
-        tk.Button(note_frame, text=t("add_note"), command=lambda: self.open_note_window(top),
-                  font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=20).pack(pady=5)
-        btn_frame_top = tk.Frame(top, bg=self.theme["bg"])
-        btn_frame_top.grid(row=5, column=0, columnspan=2, pady=8)
-        def save_and_callback():
-            self.save_new_connection(top, e_name, e_ip, e_login, group_var, top.note)
-            if callback:
-                if messagebox.askyesno(t("confirm"), "Souhaitez-vous vous connecter à cette nouvelle connexion ?", parent=self):
-                    new_row = load_connections()[-1]
-                    self.connect_connection(new_row)
-        tk.Button(btn_frame_top, text=t("save"), command=save_and_callback,
-                  font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=15, expand=True)
-        tk.Button(btn_frame_top, text=t("return"), command=top.destroy,
-                  font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=15, expand=True)
-    
-    def handle_rdp_link(self, ip):
-        self.lift()
-        self.focus_force()
-        conns = load_connections()
-        for row in conns:
-            if row[1] == ip:
-                self.connect_connection(row)
-                return
-        if messagebox.askyesno(t("confirm"), f"L'IP {ip} n'existe pas. Voulez-vous l'ajouter ?", parent=self):
-            self.add_connection(prefill_ip=ip, callback=True)
-        else:
-            login = simpledialog.askstring("Login", "Entrez votre login :", parent=self)
-            if not login:
-                messagebox.showerror("Erreur", "Login requis.", parent=self)
-                return
-            temp_row = [ip, ip, login, "N/A", "", ""]
-            self.connect_connection(temp_row, temporary=True)
-    
-    def open_note_window(self, parent):
-        if window_exists(self, t("add_note_title")):
-            return
-        top = tk.Toplevel(self)
-        top.transient(self)
-        top.iconphoto(False, self.logo)
-        top.title(t("add_note_title"))
-        top.geometry("600x350")
-        top.configure(bg=self.theme["bg"])
-        tk.Label(top, text=t("add_note"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"]).pack(pady=10)
-        text = tk.Text(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"],
-                        wrap=tk.WORD, height=10, width=70, relief="flat")
-        text.pack(padx=20, pady=10, fill=tk.BOTH, expand=True)
-        btn_frame = tk.Frame(top, bg=self.theme["bg"])
-        btn_frame.pack(pady=20)
-        def save_note():
-            parent.note = text.get("1.0", tk.END).strip()
-            top.destroy()
-        tk.Button(btn_frame, text=t("save"), command=save_note,
-                  font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=20, expand=True)
-        tk.Button(btn_frame, text=t("return"), command=top.destroy,
-                  font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=20, expand=True)
-    
-    def save_new_connection(self, top, e_name, e_ip, e_login, group_var, note_value):
+    def save_new_connection(self, top, e_name, e_ip, e_login, e_password, group_var, note_value):
         name_val = e_name.get().strip()
         ip_val = e_ip.get().strip()
         login_val = e_login.get().strip()
+        pwd_plain = e_password.get().strip()
         group_val = group_var.get().strip()
+
+        # Validation
         if not name_val or not ip_val or not login_val:
             messagebox.showerror(t("error"), t("all_fields_required"), parent=top)
             return
@@ -1346,14 +1102,18 @@ class RDPApp(tk.Tk):
         if any(r[1] == ip_val for r in load_connections()):
             if not messagebox.askyesno(t("warning"), t("warning_duplicate_ip", ip=ip_val), parent=top):
                 return
-        new_row = [name_val, ip_val, login_val, "N/A", note_value, group_val]
+
+        # Chiffrer le mot de passe s'il est renseigné
+        pwd_encrypted = encrypt_password(pwd_plain) if pwd_plain else ""
+
+        new_row = [name_val, ip_val, login_val, "N/A", note_value, group_val, pwd_encrypted]
         data = load_connections()
         data.append(new_row)
         save_connections(data)
         messagebox.showinfo(t("info"), t("connection_added"), parent=top)
         top.destroy()
         self.refresh_table()
-    
+
     def modify_connection(self, original_row):
         if window_exists(self, t("modify_connection_title")):
             return
@@ -1361,48 +1121,80 @@ class RDPApp(tk.Tk):
         top.transient(self)
         top.iconphoto(False, self.logo)
         top.title(t("modify_connection_title"))
-        top.geometry("825x300")
+        top.geometry("825x350")
         top.configure(bg=self.theme["bg"])
         top.resizable(False, False)
-        tk.Label(top, text=t("name"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"]).grid(row=0, column=0, padx=15, pady=8, sticky="e")
-        e_name = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"], relief="flat", width=50)
+
+        # Nom (row=0)
+        tk.Label(top, text=t("name"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"])\
+          .grid(row=0, column=0, padx=15, pady=8, sticky="e")
+        e_name = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"],
+                          relief="flat", width=50)
         e_name.insert(0, original_row[0])
         e_name.grid(row=0, column=1, padx=15, pady=8, sticky="w")
-        tk.Label(top, text=t("ip"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"]).grid(row=1, column=0, padx=15, pady=8, sticky="e")
-        e_ip = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"], relief="flat", width=50)
+
+        # IP (row=1)
+        tk.Label(top, text=t("ip"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"])\
+          .grid(row=1, column=0, padx=15, pady=8, sticky="e")
+        e_ip = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"],
+                        relief="flat", width=50)
         e_ip.insert(0, original_row[1])
         e_ip.grid(row=1, column=1, padx=15, pady=8, sticky="w")
-        tk.Label(top, text=t("login"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"]).grid(row=2, column=0, padx=15, pady=8, sticky="e")
-        e_login = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"], relief="flat", width=50)
+
+        # Login(s) (row=2)
+        tk.Label(top, text=t("login"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"])\
+          .grid(row=2, column=0, padx=15, pady=8, sticky="e")
+        e_login = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"],
+                           relief="flat", width=50)
         e_login.insert(0, original_row[2])
         e_login.grid(row=2, column=1, padx=15, pady=8, sticky="w")
-        tk.Label(top, text=t("group"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"]).grid(row=3, column=0, padx=15, pady=8, sticky="e")
+
+        # Mot de passe (row=3)
+        tk.Label(top, text="Mot de passe :", font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"])\
+          .grid(row=3, column=0, padx=15, pady=8, sticky="e")
+        e_password = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"],
+                              relief="flat", width=50, show="*")
+        existing_encrypted = original_row[6]
+        if existing_encrypted:
+            e_password.insert(0, decrypt_password(existing_encrypted))
+        e_password.grid(row=3, column=1, padx=15, pady=8, sticky="w")
+
+        # Groupe (row=4)
+        tk.Label(top, text=t("group"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"])\
+          .grid(row=4, column=0, padx=15, pady=8, sticky="e")
         existing_groups = get_existing_groups()
         group_var = tk.StringVar(value=original_row[5] if original_row[5] else "")
         group_options = existing_groups if existing_groups else []
         group_frame = tk.Frame(top, bg=self.theme["bg"])
-        group_frame.grid(row=3, column=1, padx=15, pady=8, sticky="w")
-        group_cb = ttk.Combobox(group_frame, textvariable=group_var, values=group_options, font=("Segoe Script", 12), width=45, state="readonly")
+        group_frame.grid(row=4, column=1, padx=15, pady=8, sticky="w")
+        group_cb = ttk.Combobox(group_frame, textvariable=group_var,
+                                values=group_options, font=("Segoe Script", 12),
+                                width=45, state="readonly")
         group_cb.grid(row=0, column=0, sticky="w")
         btn_group = tk.Button(group_frame, text="+", command=lambda: self.add_group(top, group_cb, group_var),
                               font=("Segoe Script", 10), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=1)
         btn_group.grid(row=0, column=1, padx=(5,0), sticky="w")
+
+        # Bouton "Modifier la note" (row=5)
         btn_frame_top = tk.Frame(top, bg=self.theme["bg"])
-        btn_frame_top.grid(row=4, column=0, columnspan=2, pady=8)
+        btn_frame_top.grid(row=5, column=0, columnspan=2, pady=8)
         tk.Button(btn_frame_top, text=t("modify_note_title"), command=lambda: self.edit_connection_note(original_row),
                   font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=15).pack(side=tk.LEFT, padx=10)
+
+        # Boutons Sauver / Retour (row=6)
         btn_frame_bottom = tk.Frame(top, bg=self.theme["bg"])
-        btn_frame_bottom.grid(row=5, column=0, columnspan=2, pady=8)
-        tk.Button(btn_frame_bottom, text=t("save"), command=lambda: self.save_modification(top, e_name, e_ip, e_login, group_var, original_row),
+        btn_frame_bottom.grid(row=6, column=0, columnspan=2, pady=8)
+        tk.Button(btn_frame_bottom, text=t("save"), command=lambda: self.save_modification(top, e_name, e_ip, e_login, e_password, group_var, original_row),
                   font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=10, expand=True)
         tk.Button(btn_frame_bottom, text=t("return"), command=top.destroy,
                   font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=10, expand=True)
-    
-    def save_modification(self, top, e_name, e_ip, e_login, group_var, original_row):
+
+    def save_modification(self, top, e_name, e_ip, e_login, e_password, group_var, original_row):
         new_name = e_name.get().strip() or original_row[0]
         new_ip = e_ip.get().strip() or original_row[1]
         new_login = e_login.get().strip() or original_row[2]
         new_group = group_var.get().strip() or original_row[5]
+
         if new_name != original_row[0]:
             for r in load_connections():
                 if r[0] == new_name:
@@ -1412,7 +1204,16 @@ class RDPApp(tk.Tk):
             if any(r[1] == new_ip for r in load_connections()):
                 if not messagebox.askyesno(t("warning"), t("warning_duplicate_ip", ip=new_ip), parent=top):
                     return
-        new_row = [new_name, new_ip, new_login, original_row[3], original_row[4], new_group]
+
+        # Gérer le mot de passe
+        pwd_plain = e_password.get().strip()
+        if pwd_plain:
+            pwd_encrypted = encrypt_password(pwd_plain)
+        else:
+            pwd_encrypted = original_row[6]
+
+        new_row = [new_name, new_ip, new_login, original_row[3], original_row[4], new_group, pwd_encrypted]
+
         data = load_connections()
         for i, r in enumerate(data):
             if r == original_row:
@@ -1422,7 +1223,7 @@ class RDPApp(tk.Tk):
         messagebox.showinfo(t("info"), t("connection_modified"), parent=top)
         top.destroy()
         self.refresh_table()
-    
+
     def manage_groups(self):
         if window_exists(self, t("manage_groups_title")):
             return
@@ -1468,7 +1269,7 @@ class RDPApp(tk.Tk):
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=10)
         tk.Button(btn_frame, text=t("return"), command=top.destroy, font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=10)
-    
+
     def options_menu(self):
         if window_exists(self, t("options")):
             return
@@ -1500,7 +1301,7 @@ class RDPApp(tk.Tk):
                   font=self.font_main, bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
         tk.Button(btn_frame, text=t("preferences"), command=lambda: [top.destroy(), self.preferences_menu()],
                   font=self.font_main, bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=30).pack(pady=5)
-    
+
     def display_mode_menu(self):
         top = tk.Toplevel(self)
         top.transient(self)
@@ -1529,7 +1330,7 @@ class RDPApp(tk.Tk):
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(pady=20)
         top.lift()
         top.attributes("-topmost", True)
-    
+
     def preferences_menu(self):
         if window_exists(self, t("preferences")):
             return
@@ -1560,7 +1361,7 @@ class RDPApp(tk.Tk):
                                  bg=sel_color if CURRENT_LANG == "en" else unsel_color, fg="black")
         btn_lang_fr.pack(side=tk.LEFT, padx=10)
         btn_lang_en.pack(side=tk.LEFT, padx=10)
-    
+
         # Section Thème
         theme_frame = tk.Frame(top, bg=self.theme["bg"])
         theme_frame.pack(pady=10)
@@ -1574,8 +1375,8 @@ class RDPApp(tk.Tk):
                                     bg=sel_color if CURRENT_THEME == "light" else unsel_color, fg="black")
         btn_theme_dark.pack(side=tk.LEFT, padx=10)
         btn_theme_light.pack(side=tk.LEFT, padx=10)
-    
-        # Section Mot de passe
+
+        # Section Mot de passe (application SwiftRDP)
         pwd_frame = tk.Frame(top, bg=self.theme["bg"])
         pwd_frame.pack(pady=10, padx=10, fill=tk.X)
         tk.Label(pwd_frame, text="Définir/modifier mot de passe de l'application :", font=self.font_main, bg=self.theme["bg"], fg=self.theme["button_fg"]).pack(anchor="w", pady=5)
@@ -1590,7 +1391,7 @@ class RDPApp(tk.Tk):
         tk.Label(sub_pwd_frame, text="Confirmez :", font=self.font_main, bg=self.theme["bg"], fg=self.theme["button_fg"]).grid(row=2, column=0, padx=5, pady=2, sticky="e")
         conf_pwd = tk.Entry(sub_pwd_frame, show="*", width=20)
         conf_pwd.grid(row=2, column=1, padx=5, pady=2)
-    
+
         def prompt_default_rdp():
             if messagebox.askyesno("Application par défaut", t("default_rdp_label"), parent=top):
                 with open(DEFAULT_RDP_FILE, "w", encoding="utf-8") as f:
@@ -1602,7 +1403,7 @@ class RDPApp(tk.Tk):
                     f.write("no")
         tk.Button(top, text=t("default_rdp_label"), command=prompt_default_rdp, font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=35).pack(pady=10)
-    
+
         def save_preferences():
             global CURRENT_LANG, CURRENT_THEME
             pwd_changed = False
@@ -1643,16 +1444,16 @@ class RDPApp(tk.Tk):
                 top.destroy()
         tk.Button(top, text=t("save"), command=save_preferences, font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(pady=10)
-    
+
     def set_app_password(self):
         messagebox.showinfo("Info", "Le changement de mot de passe se fait dans l'onglet Préférences.", parent=self)
-    
+
     def save_configuration(self):
         dest = filedialog.askdirectory(title=t("choose_backup_directory"), parent=self)
         if dest:
             zip_path = backup_configuration(dest, export=False)
             messagebox.showinfo(t("info"), t("configuration_saved", path=zip_path), parent=self)
-    
+
     def export_configuration(self):
         self.tk.call('tk', 'scaling', 2.5)
         dest = filedialog.askdirectory(title=t("choose_export_directory"), parent=self)
@@ -1660,7 +1461,7 @@ class RDPApp(tk.Tk):
         if dest:
             zip_path = backup_configuration(dest, export=True)
             messagebox.showinfo(t("info"), t("configuration_exported", path=zip_path), parent=self)
-    
+
     def import_configuration(self):
         self.tk.call('tk', 'scaling', 2.5)
         zip_file = filedialog.askopenfilename(title=t("select_import_file"),
@@ -1670,7 +1471,7 @@ class RDPApp(tk.Tk):
             import_configuration_func(zip_file)
             messagebox.showinfo(t("info"), t("configuration_imported"), parent=self)
             self.refresh_table()
-    
+
     def delete_configuration(self):
         conn_deleted = messagebox.askyesno(t("confirm"), t("delete_all_connections"), parent=self)
         if conn_deleted:
@@ -1688,7 +1489,7 @@ class RDPApp(tk.Tk):
             messagebox.showinfo(t("info"), t("configuration_deleted"), parent=self)
             self.attributes("-topmost", False)
         self.refresh_table()
-    
+
     def update_SwiftRDP(self):
         def progress_and_restart():
             progress_win = tk.Toplevel(self)
@@ -1708,10 +1509,10 @@ class RDPApp(tk.Tk):
             self.destroy()
             sys.exit(0)
         threading.Thread(target=progress_and_restart, daemon=True).start()
-    
+
     def support(self):
         webbrowser.open("https://github.com/Equinoxx83/SwiftRDP/issues")
-    
+
     def edit_connection_note(self, row):
         if window_exists(self, t("modify_note_title")):
             return
@@ -1733,7 +1534,193 @@ class RDPApp(tk.Tk):
                   font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=20, expand=True)
         tk.Button(btn_frame, text=t("return"), command=top.destroy,
                   font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=20, expand=True)
-    
+
+    def save_note(self, top, text, row):
+        new_note = text.get("1.0", tk.END).strip()
+        new_row = row.copy()
+        new_row[4] = new_note
+        update_connection_by_value(row, new_row)
+        messagebox.showinfo(t("info"), "Note mise à jour.", parent=top)
+        top.destroy()
+        self.refresh_table()
+
+    def connect_temporary(self):
+        ip = self.temp_ip_var.get().strip()
+        login = self.temp_login_var.get().strip()
+        if not ip or not login:
+            messagebox.showerror(t("error"), "IP et Login sont requis pour une connexion.", parent=self)
+            return
+        temp_row = [ip, ip, login, "N/A", "", "", ""]
+        self.connect_connection(temp_row, temporary=True)
+
+    def show_patch_note_dialog(self, content, show_checkbox=True):
+        dialog = tk.Toplevel(self)
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.attributes("-topmost", True)
+        dialog.iconphoto(False, self.logo)
+        dialog.title(t("patch_note"))
+        dialog.geometry("800x600")
+        dialog.configure(bg=self.theme["bg"])
+        text = tk.Text(dialog, wrap=tk.WORD, font=self.font_main,
+                       bg=self.theme["entry_bg"], fg=self.theme["fg"])
+        text.insert(tk.END, content)
+        text.config(state="disabled")
+        text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        var_hide = tk.BooleanVar()
+        if show_checkbox:
+            check = tk.Checkbutton(dialog, text=t("dont_show_again"), variable=var_hide,
+                                     bg=self.theme["bg"], fg=self.theme["fg"], font=("Segoe Script", 14),
+                                     selectcolor="lightblue")
+            check.pack(anchor="w", padx=10, pady=5)
+        def close_dialog():
+            if show_checkbox and var_hide.get():
+                with open(CHANGELOG_HIDE, "w", encoding="utf-8") as f:
+                    f.write(read_patch_note())
+            dialog.destroy()
+        tk.Button(dialog, text=t("return"), command=close_dialog, font=self.font_main,
+                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(pady=10)
+        dialog.attributes("-topmost", False)
+
+    def add_group(self, parent, combobox, var):
+        new_grp = simpledialog.askstring(t("new_group"), t("enter_new_group"), parent=parent)
+        if new_grp:
+            groups = get_existing_groups()
+            if new_grp not in groups:
+                groups.append(new_grp)
+                with open(GROUPS_FILE, "a", encoding="utf-8") as gf:
+                    gf.write(new_grp + "\n")
+            combobox["values"] = groups
+            var.set(new_grp)
+
+    def create_widgets(self):
+        self.theme = get_theme()
+        apply_custom_treeview_style()
+        search_frame = tk.Frame(self, bg=self.theme["bg"])
+        search_frame.pack(fill=tk.X, padx=15, pady=10)
+        tk.Label(search_frame, text=t("search"), font=self.font_main, bg=self.theme["bg"], fg=self.theme["fg"]).pack(side=tk.LEFT)
+        self.search_var = tk.StringVar()
+        self.search_var.trace("w", lambda *args: self.refresh_table())
+        tk.Entry(search_frame, textvariable=self.search_var, font=self.font_main, bg=self.theme["entry_bg"],
+                 fg=self.theme["fg"], insertbackground=self.theme["fg"], relief="flat").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
+
+        # Panneau de connexion temporaire
+        temp_frame = tk.Frame(self, bg=self.theme["bg"])
+        temp_frame.pack(padx=15, pady=5, anchor="center")
+
+        conn_button = tk.Button(temp_frame, text="Connexion", font=self.font_main,
+                                bg=self.theme["button_bg"], fg=self.theme["button_fg"],
+                                relief="flat", command=self.connect_temporary, width=13)
+        conn_button.grid(row=0, column=0, padx=5, pady=5)
+
+        ip_label = tk.Label(temp_frame, text="IP :", font=self.font_main,
+                            bg=self.theme["bg"], fg=self.theme["fg"])
+        ip_label.grid(row=0, column=1, padx=5, pady=5, sticky="e")
+        self.temp_ip_var = tk.StringVar()
+        ip_entry = tk.Entry(temp_frame, textvariable=self.temp_ip_var, font=self.font_main,
+                            bg=self.theme["entry_bg"], fg=self.theme["fg"], relief="flat", width=35)
+        ip_entry.grid(row=0, column=2, padx=5, pady=5, sticky="w")
+
+        login_label = tk.Label(temp_frame, text="Login :", font=self.font_main,
+                               bg=self.theme["bg"], fg=self.theme["fg"])
+        login_label.grid(row=0, column=3, padx=5, pady=5, sticky="e")
+        self.temp_login_var = tk.StringVar()
+        login_entry = tk.Entry(temp_frame, textvariable=self.temp_login_var, font=self.font_main,
+                               bg=self.theme["entry_bg"], fg=self.theme["fg"], relief="flat", width=35)
+        login_entry.grid(row=0, column=4, padx=5, pady=5, sticky="w")
+
+        columns = ("IP", "Login", "Dernière connexion", "Note")
+        self.tree = ttk.Treeview(self, style="My.Treeview", columns=columns, show="tree headings", selectmode="browse")
+        # Bind pour afficher le tooltip sur les URLs
+        self.tree.bind("<Motion>", self.on_tree_motion)
+        self.tree.bind("<Leave>", lambda e: self.hide_note_tooltip())
+        self.tree.heading("#0", text="Nom")
+        self.tree.column("#0", width=300)
+        self.tree.heading("IP", text="IP")
+        self.tree.column("IP", width=150)
+        self.tree.heading("Login", text="Login")
+        self.tree.column("Login", width=150)
+        self.tree.heading("Dernière connexion", text="Dernière connexion")
+        self.tree.column("Dernière connexion", width=200)
+        self.tree.heading("Note", text="Note")
+        self.tree.column("Note", width=300)
+        self.tree.pack(fill=tk.BOTH, expand=True, padx=15, pady=10)
+        self.tree.bind("<Button-3>", lambda event: show_context_menu(self, event))
+
+        btn_frame = tk.Frame(self, bg=self.theme["bg"])
+        btn_frame.pack(fill=tk.X, padx=15, pady=10)
+        btn_texts = [t("connect"), t("add"), t("modify"), t("delete"), t("manage_groups"), t("options")]
+        btn_commands = [self.action_connect, self.action_add, self.action_modify, self.action_delete, self.manage_groups, self.options_menu]
+        for i, (txt, cmd) in enumerate(zip(btn_texts, btn_commands)):
+            tk.Button(btn_frame, text=txt, command=cmd, font=self.font_main,
+                      bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat").grid(row=0, column=i, padx=10, sticky="ew")
+        for i in range(len(btn_texts)):
+            btn_frame.grid_columnconfigure(i, weight=1)
+
+    def refresh_table(self):
+        refresh_table_global(self)
+
+    def get_selected_row(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showinfo(t("info"), t("select_connection"), parent=self)
+            return None
+        item = self.tree.item(sel[0])
+        if item.get("values"):
+            full_data = load_connections()
+            for row in full_data:
+                if row[0] == item["text"]:
+                    return row
+        else:
+            messagebox.showinfo(t("info"), "Veuillez sélectionner une connexion (pas un groupe).", parent=self)
+            return None
+
+    def action_connect(self):
+        row = self.get_selected_row()
+        if row:
+            self.connect_connection(row)
+
+    def action_add(self):
+        if window_exists(self, t("add_connection_title")):
+            return
+        self.add_connection()
+
+    def action_modify(self):
+        row = self.get_selected_row()
+        if row:
+            if window_exists(self, t("modify_connection_title")):
+                return
+            self.modify_connection(row)
+
+    def action_delete(self):
+        row = self.get_selected_row()
+        if row and messagebox.askyesno(t("confirm"), f"{t('delete_connection')} {row[0]} ?", parent=self):
+            delete_connection((row[0], row[5]))
+            messagebox.showinfo(t("info"), t("connection_deleted"), parent=self)
+            self.refresh_table()
+
+    def edit_connection_note(self, row):
+        if window_exists(self, t("modify_note_title")):
+            return
+        top = tk.Toplevel(self)
+        top.transient(self)
+        top.iconphoto(False, self.logo)
+        top.title(t("modify_note_title"))
+        top.geometry("600x350")
+        top.configure(bg=self.theme["bg"])
+        tk.Label(top, text=f"{t('note_for')} {row[0]}:", font=("Segoe Script", 12),
+                 bg=self.theme["bg"], fg=self.theme["button_fg"]).pack(pady=10)
+        text = tk.Text(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"],
+                        wrap=tk.WORD, height=10, width=70, relief="flat")
+        text.insert(tk.END, row[4])
+        text.pack(padx=20, pady=10, fill=tk.BOTH, expand=True)
+        btn_frame = tk.Frame(top, bg=self.theme["bg"])
+        btn_frame.pack(pady=20)
+        tk.Button(btn_frame, text=t("save"), command=lambda: self.save_note(top, text, row),
+                  font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=20, expand=True)
+        tk.Button(btn_frame, text=t("return"), command=top.destroy,
+                  font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=20, expand=True)
+
     def save_note(self, top, text, row):
         new_note = text.get("1.0", tk.END).strip()
         new_row = row.copy()
