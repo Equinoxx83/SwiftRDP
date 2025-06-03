@@ -2,3 +2,4 @@
 - Added clickable link possible in the note field
 - Add a pop-up when you pass the mouse on a clickable link
 - Possibility of being redirected to the browser after clicking on a link
+- Fix security of password connexion rdp. Now based on password application SwiftRDP for decrypt.
