@@ -3,49 +3,59 @@ import re
 import webbrowser
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
-import subprocess, os, zipfile, shutil, tempfile, threading, time, sys, hashlib, socket, fcntl
+import subprocess, os, zipfile, shutil, tempfile, threading, time, sys, hashlib, socket
 from datetime import datetime
 from functools import partial
-import itertools
 from base64 import b64encode, b64decode
 
 # Seuil pour considérer un double-clic rapide (en millisecondes)
 DOUBLE_CLICK_THRESHOLD = 250
 
 ######################################
-# Fonction de hashage du mot de passe (application principale)
+# Utilitaire de dérivation de clé à partir du mot de passe maître
 ######################################
-def hash_password(password):
-    return hashlib.sha256(password.encode('utf-8')).hexdigest()
-
-######################################
-# Clé et fonctions de chiffrement/déchiffrement pour les mots de passe RDP
-######################################
-_XOR_KEY = 0x5A
-
-def encrypt_password(clear_text: str) -> str:
+def derive_key(master_password: str) -> bytes:
     """
-    Chiffre la chaîne 'clear_text' avec XOR + base64 pour masquer le mot de passe dans le fichier.
+    À partir du mot de passe maître (en clair), on calcule une clé de 32 octets via SHA-256.
+    """
+    return hashlib.sha256(master_password.encode("utf-8")).digest()
+
+def xor_cipher(data: bytes, key: bytes) -> bytes:
+    """
+    Chiffrement/déchiffrement par XOR entre 'data' et 'key' (répété si besoin).
+    """
+    return bytes(b ^ key[i % len(key)] for i, b in enumerate(data))
+
+def encrypt_password(clear_text: str, key: bytes) -> str:
+    """
+    Chiffre 'clear_text' en hex ou base64 pour stocker dans le fichier.
+    On utilise XOR(key) + base64 pour rendre le tout non visible en clair.
     """
     raw = clear_text.encode("utf-8")
-    xored = bytes(b ^ _XOR_KEY for b in raw)
+    xored = xor_cipher(raw, key)
     return b64encode(xored).decode("utf-8")
 
-def decrypt_password(cipher_text: str) -> str:
+def decrypt_password(cipher_text: str, key: bytes) -> str:
     """
-    Déchiffre la chaîne chiffrée précédemment par encrypt_password.
+    Déchiffre ce qui a été chiffré par encrypt_password (XOR + base64).
     """
     if not cipher_text:
         return ""
     try:
         xored = b64decode(cipher_text.encode("utf-8"))
-        raw = bytes(b ^ _XOR_KEY for b in xored)
+        raw = xor_cipher(xored, key)
         return raw.decode("utf-8")
     except Exception:
         return ""
 
 ######################################
-# Traductions et fonction t
+# Fonction de hashage du mot de passe maître (stocké en SHA-256)
+######################################
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+######################################
+# Traductions et fonction t()
 ######################################
 translations = {
     "fr": {
@@ -231,8 +241,8 @@ def t(key, **kwargs):
 ######################################
 # Dossiers, chemins et permissions
 ######################################
-PROJECT_DIR = "/opt/SwiftRDP"  # Fichiers du projet
-CONFIG_DIR = "/usr/local/share/appdata/.SwiftRDP"  # Fichiers de configuration
+PROJECT_DIR = "/opt/SwiftRDP"  
+CONFIG_DIR = "/usr/local/share/appdata/.SwiftRDP"
 
 if not os.path.exists(CONFIG_DIR):
     os.makedirs(CONFIG_DIR, exist_ok=True)
@@ -242,7 +252,7 @@ def check_and_fix_permissions():
     if not os.access(CONFIG_DIR, os.W_OK):
         try:
             subprocess.check_call(["sudo", "chown", "-R", f"{os.environ.get('USER')}:{os.environ.get('USER')}", CONFIG_DIR])
-        except Exception as e:
+        except Exception:
             messagebox.showerror("Erreur de permissions",
                 "Impossible de modifier les droits sur le dossier de configuration.\n"
                 "Veuillez lancer l'application en sudo ou vérifier les permissions manuellement.")
@@ -251,21 +261,24 @@ def check_and_fix_permissions():
 check_and_fix_permissions()
 
 # Chemins de configuration
-LANGUAGE_FILE = os.path.join(CONFIG_DIR, "language.conf")
-THEME_FILE = os.path.join(CONFIG_DIR, "theme.conf")
-FILE_CONNS = os.path.join(CONFIG_DIR, "connexions.txt")
-GROUPS_FILE = os.path.join(CONFIG_DIR, "groups.txt")
-PASSWORD_FILE = os.path.join(CONFIG_DIR, "password.conf")
-SHORTCUTS_FILE = os.path.join(CONFIG_DIR, "shortcuts.conf")
+LANGUAGE_FILE     = os.path.join(CONFIG_DIR, "language.conf")
+THEME_FILE        = os.path.join(CONFIG_DIR, "theme.conf")
+FILE_CONNS        = os.path.join(CONFIG_DIR, "connexions.txt")
+GROUPS_FILE       = os.path.join(CONFIG_DIR, "groups.txt")
+PASSWORD_FILE     = os.path.join(CONFIG_DIR, "password.conf")
+SHORTCUTS_FILE    = os.path.join(CONFIG_DIR, "shortcuts.conf")
 DISPLAY_MODE_FILE = os.path.join(CONFIG_DIR, "display_mode.conf")
-DEFAULT_RDP_FILE = os.path.join(CONFIG_DIR, "default_rdp.conf")
+DEFAULT_RDP_FILE  = os.path.join(CONFIG_DIR, "default_rdp.conf")
 
 # Fichiers du projet
-CHANGELOG_FILE = os.path.join(PROJECT_DIR, "CHANGELOG")
-CHANGELOG_HIDE = os.path.join(PROJECT_DIR, "CHANGELOGHIDE")
-VERSION_FILE = os.path.join(PROJECT_DIR, "version.txt")
-ICON_FILE = os.path.join(PROJECT_DIR, "icon.png")
-PATCH_NOTE_FLAG = os.path.join(PROJECT_DIR, "PATCH_NOTE_PENDING")
+CHANGELOG_FILE   = os.path.join(PROJECT_DIR, "CHANGELOG")
+CHANGELOG_HIDE   = os.path.join(PROJECT_DIR, "CHANGELOGHIDE")
+VERSION_FILE     = os.path.join(PROJECT_DIR, "version.txt")
+ICON_FILE        = os.path.join(PROJECT_DIR, "icon.png")
+PATCH_NOTE_FLAG  = os.path.join(PROJECT_DIR, "PATCH_NOTE_PENDING")
+
+# Clé de chiffrement dérivée du mot de passe maître (sera initialisée lors du check_password)
+MASTER_KEY = None
 
 ######################################
 # Configuration RDP par défaut
@@ -309,7 +322,7 @@ else:
     CONN_DISPLAY_MODE = "fenetres"
 
 ######################################
-# Socket listener
+# Socket listener pour instance unique
 ######################################
 def socket_listener(app):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -320,10 +333,8 @@ def socket_listener(app):
         try:
             conn, addr = s.accept()
             data = conn.recv(1024).decode().strip()
-            print("Message reçu via socket :", data)
             if data.startswith("rdp://"):
                 ip = data[len("rdp://"):]
-                # Utilisation de handle_rdp_link pour traiter le lien
                 app.after(0, app.handle_rdp_link, ip)
             conn.close()
         except Exception as e:
@@ -331,7 +342,7 @@ def socket_listener(app):
             break
 
 ######################################
-# Définition de get_theme
+# Thème / styles
 ######################################
 def get_theme():
     if CURRENT_THEME == "light":
@@ -355,9 +366,6 @@ def get_theme():
             "tree_fg": "#c0c0c0"
         }
 
-######################################
-# Appliquer le style personnalisé du Treeview
-######################################
 def apply_custom_treeview_style():
     style = ttk.Style()
     style.theme_use("clam")
@@ -369,16 +377,15 @@ def apply_custom_treeview_style():
         style.configure("My.Treeview.Heading", background="#e0e0e0", foreground="#000000")
 
 ######################################
-# Fonctions utilitaires diverses
+# Fonctions utilitaires
 ######################################
-def format_note(note):
+def format_note(note: str) -> str:
     display = note.replace("\n", " ")
     return display if len(display) <= 30 else display[:30] + "..."
 
 def ask_login_selection(options, parent=None):
     top = tk.Toplevel(parent)
     top.title("Sélectionnez un login")
-    # Centrage par rapport au parent s'il est fourni
     if parent is not None:
         parent.update_idletasks()
         parent_x = parent.winfo_rootx()
@@ -392,7 +399,7 @@ def ask_login_selection(options, parent=None):
         top.geometry(f"{top_width}x{top_height}+{pos_x}+{pos_y}")
     else:
         top.geometry("300x150")
-    
+
     tk.Label(top, text="Choisissez un login:", font=("Segoe Script", 12)).pack(padx=10, pady=10)
     var = tk.StringVar(value=options[0])
     combo = ttk.Combobox(top, textvariable=var, values=options, state="readonly", font=("Segoe Script", 12))
@@ -407,20 +414,22 @@ def ask_login_selection(options, parent=None):
 
 def load_connections():
     """
-    Lit le fichier connexions.txt et renvoie une liste de listes :
-    [Nom, IP, Login(s), Dernière connexion, Note, Groupe, MotDePasseChiffre]
+    Lit connexions.txt.
+    Chaque ligne contient : Nom|IP|Login(s)|Dernière connexion|Note (avec <NL> pour sauts de ligne)|Groupe|MotDePasseChiffré
+    Retourne une liste de listes à 7 éléments.
     """
     conns = []
+    if not os.path.exists(FILE_CONNS):
+        open(FILE_CONNS, "w", encoding="utf-8").close()
     with open(FILE_CONNS, "r", encoding="utf-8") as f:
         for line in f:
             line = line.rstrip("\n")
             if not line:
                 continue
             parts = line.split("|")
-            # Restaurer les sauts de ligne dans la note
+            # Restaurer la note multi-lignes
             if len(parts) >= 5:
                 parts[4] = parts[4].replace("<NL>", "\n")
-            # S'assurer qu'il y a au moins 7 champs (ajouter vides sinon)
             while len(parts) < 7:
                 parts.append("")
             conns.append(parts)
@@ -428,11 +437,11 @@ def load_connections():
 
 def save_connections(data):
     """
-    Écrit la liste 'data' (listes de 7 éléments) dans connexions.txt.    
+    Écrit la liste data (listes à 7 champs) dans connexions.txt.
+    On remplace \n par <NL> dans la note avant d'écrire.
     """
     with open(FILE_CONNS, "w", encoding="utf-8") as f:
         for row in data:
-            # Remplacer les sauts de ligne dans la note par <NL>
             row[4] = row[4].replace("\n", "<NL>")
             while len(row) < 7:
                 row.append("")
@@ -453,17 +462,19 @@ def delete_connection(key):
 
 def load_groups():
     groups = []
+    if not os.path.exists(GROUPS_FILE):
+        open(GROUPS_FILE, "w", encoding="utf-8").close()
     with open(GROUPS_FILE, "r", encoding="utf-8") as f:
         for line in f:
-            group = line.strip()
-            if group:
-                groups.append(group)
+            g = line.strip()
+            if g:
+                groups.append(g)
     return groups
 
 def save_groups(groups):
     with open(GROUPS_FILE, "w", encoding="utf-8") as f:
-        for group in groups:
-            f.write(group + "\n")
+        for g in groups:
+            f.write(g + "\n")
 
 def get_existing_groups():
     return load_groups()
@@ -535,7 +546,7 @@ def refresh_table_global(app):
         grp = row[5] if row[5] else "Sans groupe"
         groupes.setdefault(grp, []).append(row)
 
-    url_pattern = r'https?://[^\s]+'  # http:// ou https:// jusqu'à un espace
+    url_pattern = r'https?://[^\s]+'  # http:// ou https:// jusqu'à l'espace
 
     for grp in sorted(groupes.keys(), key=lambda g: g.lower()):
         parent_id = app.tree.insert("", "end", text=grp, open=True)
@@ -567,7 +578,7 @@ def window_exists(root, title):
     return False
 
 ######################################
-# Fenêtre "À propos" améliorée
+# Fenêtre "À propos"
 ######################################
 def about_dialog(app):
     top = tk.Toplevel(app)
@@ -578,10 +589,12 @@ def about_dialog(app):
     top.grab_set()
     top.configure(bg=app.theme["bg"])
     
-    header = tk.Label(top, text="SwiftRDP", font=("Segoe Script", 20, "bold"), bg=app.theme["bg"], fg=app.theme["fg"])
+    header = tk.Label(top, text="SwiftRDP", font=("Segoe Script", 20, "bold"),
+                      bg=app.theme["bg"], fg=app.theme["fg"])
     header.pack(pady=(20, 5))
     
-    version_label = tk.Label(top, text="Version 2.9.1", font=("Segoe Script", 14), bg=app.theme["bg"], fg=app.theme["fg"])
+    version_label = tk.Label(top, text="Version 2.9.4.1", font=("Segoe Script", 14),
+                             bg=app.theme["bg"], fg=app.theme["fg"])
     version_label.pack(pady=(0, 10))
     
     separator = ttk.Separator(top, orient="horizontal")
@@ -590,18 +603,23 @@ def about_dialog(app):
     info_text = ("Développé par Dorian SCHNEIDER\n"
                  "Ce programme est fourni sans aucune garantie.\n"
                  "Pour plus d'informations, visitez le projet sur GitHub.")
-    info_label = tk.Label(top, text=info_text, font=("Segoe Script", 12), bg=app.theme["bg"], fg=app.theme["fg"], justify="center")
+    info_label = tk.Label(top, text=info_text, font=("Segoe Script", 12),
+                          bg=app.theme["bg"], fg=app.theme["fg"], justify="center")
     info_label.pack(pady=(10, 10))
     
-    link = tk.Label(top, text="GitHub : https://github.com/Equinoxx83/SwiftRDP", font=("Segoe Script", 12, "underline"), fg="blue", bg=app.theme["bg"], cursor="hand2")
+    link = tk.Label(top, text="GitHub : https://github.com/Equinoxx83/SwiftRDP",
+                    font=("Segoe Script", 12, "underline"), fg="blue",
+                    bg=app.theme["bg"], cursor="hand2")
     link.pack()
     link.bind("<Button-1>", lambda e: webbrowser.open("https://github.com/Equinoxx83/SwiftRDP"))
     
-    close_btn = tk.Button(top, text="OK", font=("Segoe Script", 12), bg=app.theme["button_bg"], fg=app.theme["button_fg"], command=top.destroy)
+    close_btn = tk.Button(top, text="OK", font=("Segoe Script", 12),
+                          bg=app.theme["button_bg"], fg=app.theme["button_fg"],
+                          command=top.destroy)
     close_btn.pack(pady=(20, 10))
 
 ######################################
-# Vérification des mises à jour
+# Vérification & mise à jour
 ######################################
 def check_for_update(app, from_menu=False):
     repo_url = "https://github.com/Equinoxx83/SwiftRDP.git"
@@ -663,7 +681,6 @@ def update_app(app, repo_url, remote_version):
     def progress_and_restart():
         progress_win = tk.Toplevel(app)
         progress_win.title(t("update_complete"))
-        # Récupérer la position et la taille de la fenêtre principale
         main_x = app.winfo_x()
         main_y = app.winfo_y()
         main_width = app.winfo_width()
@@ -689,7 +706,7 @@ def update_app(app, repo_url, remote_version):
     threading.Thread(target=progress_and_restart, daemon=True).start()
 
 ######################################
-# Gestion du lien RDP reçu par socket et lors du lancement
+# Classe principale de l’application
 ######################################
 class RDPApp(tk.Tk):
     def __init__(self):
@@ -705,7 +722,7 @@ class RDPApp(tk.Tk):
         self.configure(bg=self.theme["bg"])
         self.font_main = ("Segoe Script", 12)
         self.font_heading = ("Segoe Script", 12)
-        self.last_click_time = 0  # Pour le double-clic
+        self.last_click_time = 0
         self.create_widgets()
         self.refresh_table()
         self.tree.bind("<Button-1>", self.record_click)
@@ -715,105 +732,75 @@ class RDPApp(tk.Tk):
         self.bind("<Map>", self.on_map)
         if not os.path.exists(CHANGELOG_HIDE):
             self.after(2000, lambda: self.show_patch_note_dialog(read_patch_note()))
-        # Le check for update se lance après authentification
-     
+
     def on_map(self, event):
         self.configure(bg=self.theme["bg"])
-    
+
     def record_click(self, event):
         self.last_click_time = event.time
-    
+
     def handle_double_click(self, event):
-        # Pour ne pas réagir aux double‐clics trop lents
+        # Ne pas réagir si trop lent
         if (event.time - self.last_click_time) > DOUBLE_CLICK_THRESHOLD:
             return
-
-        # Récupère la ligne et la colonne cliquées
         row = self.get_selected_row()
         if row is None:
             return
-
         col = self.tree.identify_column(event.x)
-        if col == "#4":  # colonne "Note"
+        if col == "#4":  # Note
             note = row[4] or ""
-            # Pattern pour trouver la première URL (http:// ou https://…)
             url_pattern = r'https?://[^\s]+'
             match = re.search(url_pattern, note)
             if match:
                 webbrowser.open(match.group())
             else:
-                # Pas d’URL : on bascule sur l’édition de la note
                 self.edit_connection_note(row)
         else:
-            # Si ce n’est pas la colonne Note, on lance la connexion
             self.connect_connection(row)
 
     def on_tree_motion(self, event):
-        # Dès que la souris bouge sur le Treeview, on regarde s'il y a une URL sous le curseur.
         iid = self.tree.identify_row(event.y)
         col = self.tree.identify_column(event.x)
-        # Si on n'est pas sur une ligne valide, ou pas sur la colonne Note ("#4"), on masque le tooltip.
         if not iid or col != "#4":
             self.hide_note_tooltip()
             return
-
         item = self.tree.item(iid)
-        # Si ce n'est pas une "vraie" connexion (ex. en-tête de groupe), on sort.
         if not item.get("values"):
             self.hide_note_tooltip()
             return
-
-        # Récupérer le nom de la connexion (colonne "#0"), puis chercher la ligne correspondante.
         name = item["text"]
         note = ""
         for row in load_connections():
             if row[0] == name:
                 note = row[4] or ""
                 break
-
-        # On cherche la première URL "http://…" ou "https://…"
         match = re.search(r"https?://[^\s]+", note)
         if not match:
             self.hide_note_tooltip()
             return
-
         url = match.group()
-        # Position du tooltip : un peu décalé par rapport au curseur
         x = event.x_root + 10
         y = event.y_root + 10
         self.show_note_tooltip(url, x, y)
 
     def show_note_tooltip(self, url, x, y):
-        # Si on a déjà un tooltip, et qu'il affiche la même URL, on ne recrée pas tout, on repositionne juste.
         if self.note_tooltip and getattr(self.note_tooltip, "current_url", None) == url:
             try:
                 self.note_tooltip.geometry(f"+{x}+{y}")
             except:
                 pass
             return
-
-        # Sinon, on détruit l'ancien (s'il existe) et on en crée un nouveau.
         self.hide_note_tooltip()
-
         tw = tk.Toplevel(self)
-        tw.overrideredirect(True)            # pas de bordure
-        tw.attributes("-topmost", True)      # toujours devant
-        tw.current_url = url                 # on garde l'URL dans un attribut
-
+        tw.overrideredirect(True)
+        tw.attributes("-topmost", True)
+        tw.current_url = url
         tw.configure(bg="white")
-
-        lbl = tk.Label(tw,
-                       text=url,
-                       fg="blue",
-                       cursor="hand2",
-                       font=("Segoe Script", 10, "underline"),
-                       bg="white")
+        lbl = tk.Label(tw, text=url, fg="blue", cursor="hand2",
+                       font=("Segoe Script", 10, "underline"), bg="white")
         lbl.pack(padx=2, pady=2)
-
         lbl.bind("<Button-1>", lambda e: webbrowser.open(url))
-
         tw.bind("<FocusOut>", lambda e: self.hide_note_tooltip())
-
         tw.geometry(f"+{x}+{y}")
         self.note_tooltip = tw
 
@@ -829,14 +816,10 @@ class RDPApp(tk.Tk):
         apply_custom_treeview_style()
         self.tree.configure(style="My.Treeview")
 
-    def prompt_rdp_connection(self, ip):
-        # Pour compatibilité, cette méthode n'est plus utilisée lors du lancement.
-        self.handle_rdp_link(ip)
-
     def connect_connection(self, row, pwd_provided=None, temporary=False):
         """
-        Lance la connexion RDP. Si un mot de passe chiffré (row[6]) est présent,
-        on le déchiffre et on l'utilise. Sinon, on demande à l'utilisateur.
+        Lance la connexion RDP. Si le mot de passe chiffré est présent, on le déchiffre
+        via MASTER_KEY. Sinon, on demande à l'utilisateur.
         """
         if row is None:
             return
@@ -848,13 +831,13 @@ class RDPApp(tk.Tk):
             if len(available_logins) > 1:
                 selected_login = ask_login_selection(available_logins, parent=self)
 
-        # Détermination du mot de passe à utiliser
+        # Choisir le mot de passe à utiliser :
         if pwd_provided is not None:
             pwd = pwd_provided
         else:
             saved_cipher = row[6]
             if saved_cipher:
-                pwd = decrypt_password(saved_cipher)
+                pwd = decrypt_password(saved_cipher, MASTER_KEY)
             else:
                 pwd = simpledialog.askstring(
                     t("password"),
@@ -880,7 +863,7 @@ class RDPApp(tk.Tk):
             return
 
         main_x = self.winfo_x()
-        main_y = self.winfo_y()
+        main_y = self.winfo_rooty()
         main_width = self.winfo_width()
         main_height = self.winfo_height()
         win_width = 400
@@ -966,12 +949,6 @@ class RDPApp(tk.Tk):
                 self.configure(bg=self.theme["bg"])
             threading.Thread(target=check_temp_connection, daemon=True).start()
 
-    def wait_for_temp_connection(self, proc, row):
-        proc.wait()
-        self.after(0, lambda: self.prompt_save_temporary(row))
-        self.connection_in_progress = False
-        self.configure(bg=self.theme["bg"])
-
     def prompt_save_temporary(self, row):
         if any(r[1] == row[1] for r in load_connections()):
             return
@@ -997,7 +974,6 @@ class RDPApp(tk.Tk):
             temp_row = [ip, ip, login, "N/A", "", "", ""]
             self.connect_connection(temp_row, temporary=True)
 
-    # Modification de add_connection pour accepter mot de passe
     def add_connection(self, prefill_ip=None, prefill_login=None, callback=False):
         if window_exists(self, t("add_connection_title")):
             return
@@ -1018,7 +994,7 @@ class RDPApp(tk.Tk):
 
         # IP
         tk.Label(top, text=t("ip"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"])\
-           .grid(row=1, column=0, padx=15, pady=8, sticky="e")
+          .grid(row=1, column=0, padx=15, pady=8, sticky="e")
         e_ip = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"],
                         relief="flat", width=50)
         if prefill_ip:
@@ -1041,7 +1017,7 @@ class RDPApp(tk.Tk):
                               relief="flat", width=50, show="*")
         e_password.grid(row=3, column=1, padx=15, pady=8, sticky="w")
 
-        # Groupe (poussé à row=4)
+        # Groupe
         tk.Label(top, text=t("group"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"])\
           .grid(row=4, column=0, padx=15, pady=8, sticky="e")
         existing_groups = get_existing_groups()
@@ -1058,7 +1034,7 @@ class RDPApp(tk.Tk):
                               relief="flat", width=1)
         btn_group.grid(row=0, column=1, padx=(5,0), sticky="w")
 
-        # Champ Note (row=5)
+        # Note
         top.note = ""
         note_frame = tk.Frame(top, bg=self.theme["bg"])
         note_frame.grid(row=5, column=0, columnspan=2, pady=8)
@@ -1066,17 +1042,15 @@ class RDPApp(tk.Tk):
                   font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"],
                   relief="flat", width=20).pack(pady=5)
 
-        # Boutons Sauver / Retour (row=6)
+        # Boutons Sauver / Retour
         btn_frame_top = tk.Frame(top, bg=self.theme["bg"])
         btn_frame_top.grid(row=6, column=0, columnspan=2, pady=8)
-
         def save_and_callback():
             self.save_new_connection(top, e_name, e_ip, e_login, e_password, group_var, top.note)
             if callback:
                 if messagebox.askyesno(t("confirm"), "Souhaitez-vous vous connecter à cette nouvelle connexion ?", parent=self):
                     new_row = load_connections()[-1]
                     self.connect_connection(new_row)
-
         tk.Button(btn_frame_top, text=t("save"), command=save_and_callback,
                   font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"],
                   relief="flat", width=12).pack(side=tk.LEFT, padx=15, expand=True)
@@ -1091,7 +1065,6 @@ class RDPApp(tk.Tk):
         pwd_plain = e_password.get().strip()
         group_val = group_var.get().strip()
 
-        # Validation
         if not name_val or not ip_val or not login_val:
             messagebox.showerror(t("error"), t("all_fields_required"), parent=top)
             return
@@ -1103,8 +1076,8 @@ class RDPApp(tk.Tk):
             if not messagebox.askyesno(t("warning"), t("warning_duplicate_ip", ip=ip_val), parent=top):
                 return
 
-        # Chiffrer le mot de passe s'il est renseigné
-        pwd_encrypted = encrypt_password(pwd_plain) if pwd_plain else ""
+        # Chiffrer le mot de passe RDP s'il est renseigné
+        pwd_encrypted = encrypt_password(pwd_plain, MASTER_KEY) if pwd_plain else ""
 
         new_row = [name_val, ip_val, login_val, "N/A", note_value, group_val, pwd_encrypted]
         data = load_connections()
@@ -1125,7 +1098,7 @@ class RDPApp(tk.Tk):
         top.configure(bg=self.theme["bg"])
         top.resizable(False, False)
 
-        # Nom (row=0)
+        # Nom
         tk.Label(top, text=t("name"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"])\
           .grid(row=0, column=0, padx=15, pady=8, sticky="e")
         e_name = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"],
@@ -1133,7 +1106,7 @@ class RDPApp(tk.Tk):
         e_name.insert(0, original_row[0])
         e_name.grid(row=0, column=1, padx=15, pady=8, sticky="w")
 
-        # IP (row=1)
+        # IP
         tk.Label(top, text=t("ip"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"])\
           .grid(row=1, column=0, padx=15, pady=8, sticky="e")
         e_ip = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"],
@@ -1141,7 +1114,7 @@ class RDPApp(tk.Tk):
         e_ip.insert(0, original_row[1])
         e_ip.grid(row=1, column=1, padx=15, pady=8, sticky="w")
 
-        # Login(s) (row=2)
+        # Login(s)
         tk.Label(top, text=t("login"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"])\
           .grid(row=2, column=0, padx=15, pady=8, sticky="e")
         e_login = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"],
@@ -1149,17 +1122,20 @@ class RDPApp(tk.Tk):
         e_login.insert(0, original_row[2])
         e_login.grid(row=2, column=1, padx=15, pady=8, sticky="w")
 
-        # Mot de passe (row=3)
+        # Mot de passe RDP
         tk.Label(top, text="Mot de passe :", font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"])\
           .grid(row=3, column=0, padx=15, pady=8, sticky="e")
         e_password = tk.Entry(top, font=("Segoe Script", 12), bg=self.theme["entry_bg"], fg=self.theme["button_fg"],
                               relief="flat", width=50, show="*")
         existing_encrypted = original_row[6]
         if existing_encrypted:
-            e_password.insert(0, decrypt_password(existing_encrypted))
+            try:
+                e_password.insert(0, decrypt_password(existing_encrypted, MASTER_KEY))
+            except Exception:
+                pass
         e_password.grid(row=3, column=1, padx=15, pady=8, sticky="w")
 
-        # Groupe (row=4)
+        # Groupe
         tk.Label(top, text=t("group"), font=("Segoe Script", 12), bg=self.theme["bg"], fg=self.theme["button_fg"])\
           .grid(row=4, column=0, padx=15, pady=8, sticky="e")
         existing_groups = get_existing_groups()
@@ -1175,13 +1151,13 @@ class RDPApp(tk.Tk):
                               font=("Segoe Script", 10), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=1)
         btn_group.grid(row=0, column=1, padx=(5,0), sticky="w")
 
-        # Bouton "Modifier la note" (row=5)
+        # Bouton "Modifier la note"
         btn_frame_top = tk.Frame(top, bg=self.theme["bg"])
         btn_frame_top.grid(row=5, column=0, columnspan=2, pady=8)
         tk.Button(btn_frame_top, text=t("modify_note_title"), command=lambda: self.edit_connection_note(original_row),
                   font=("Segoe Script", 12), bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=15).pack(side=tk.LEFT, padx=10)
 
-        # Boutons Sauver / Retour (row=6)
+        # Boutons Sauver / Retour
         btn_frame_bottom = tk.Frame(top, bg=self.theme["bg"])
         btn_frame_bottom.grid(row=6, column=0, columnspan=2, pady=8)
         tk.Button(btn_frame_bottom, text=t("save"), command=lambda: self.save_modification(top, e_name, e_ip, e_login, e_password, group_var, original_row),
@@ -1205,10 +1181,9 @@ class RDPApp(tk.Tk):
                 if not messagebox.askyesno(t("warning"), t("warning_duplicate_ip", ip=new_ip), parent=top):
                     return
 
-        # Gérer le mot de passe
         pwd_plain = e_password.get().strip()
         if pwd_plain:
-            pwd_encrypted = encrypt_password(pwd_plain)
+            pwd_encrypted = encrypt_password(pwd_plain, MASTER_KEY)
         else:
             pwd_encrypted = original_row[6]
 
@@ -1263,10 +1238,10 @@ class RDPApp(tk.Tk):
                 listbox.delete(sel[0])
                 messagebox.showinfo(t("info"), f"{grp} {t('delete')}.\nLes connexions l'utilisant seront vidées.", parent=top)
                 self.refresh_table()
-        tk.Button(btn_frame, text=t("add_group_option"), command=add_new_group, font=self.font_main,
-                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=10)
-        tk.Button(btn_frame, text=t("delete"), command=delete_selected, font=self.font_main,
-                  bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text=t("add_group_option"), command=add_new_group,
+                  font=self.font_main, bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text=t("delete"), command=delete_selected,
+                  font=self.font_main, bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=10)
         tk.Button(btn_frame, text=t("return"), command=top.destroy, font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(side=tk.LEFT, padx=10)
 
@@ -1342,6 +1317,7 @@ class RDPApp(tk.Tk):
         top.title(t("preferences"))
         top.geometry("420x450")
         top.configure(bg=self.theme["bg"])
+
         # Section Langue
         lang_frame = tk.Frame(top, bg=self.theme["bg"])
         lang_frame.pack(pady=10)
@@ -1376,7 +1352,7 @@ class RDPApp(tk.Tk):
         btn_theme_dark.pack(side=tk.LEFT, padx=10)
         btn_theme_light.pack(side=tk.LEFT, padx=10)
 
-        # Section Mot de passe (application SwiftRDP)
+        # Section Mot de passe (maître)
         pwd_frame = tk.Frame(top, bg=self.theme["bg"])
         pwd_frame.pack(pady=10, padx=10, fill=tk.X)
         tk.Label(pwd_frame, text="Définir/modifier mot de passe de l'application :", font=self.font_main, bg=self.theme["bg"], fg=self.theme["button_fg"]).pack(anchor="w", pady=5)
@@ -1405,8 +1381,9 @@ class RDPApp(tk.Tk):
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=35).pack(pady=10)
 
         def save_preferences():
-            global CURRENT_LANG, CURRENT_THEME
+            global CURRENT_LANG, CURRENT_THEME, MASTER_KEY
             pwd_changed = False
+            # Si on touche à l'actuel / nouveau mot de passe maître
             if current_pwd.get().strip() or new_pwd.get().strip() or conf_pwd.get().strip():
                 if os.path.exists(PASSWORD_FILE):
                     with open(PASSWORD_FILE, "r", encoding="utf-8") as f:
@@ -1419,12 +1396,42 @@ class RDPApp(tk.Tk):
                         messagebox.showerror("Erreur", "Les mots de passe ne correspondent pas.", parent=top)
                         return
                     else:
+                        # On change le mot de passe maître : 
+                        # 1) on re-derive la nouvelle clé MASTER_KEY (pour l'instant, l'ancienne MASTER_KEY est encore en mémoire)
+                        old_key = MASTER_KEY
+                        new_master = new_pwd.get().strip()
+                        new_key = derive_key(new_master)
+                        # 2) on réencrypte TOUTES les entrées existantes :
+                        data = load_connections()
+                        reencrypted = []
+                        for row in data:
+                            # row[6] est l'ancien chiffrement : on le déchiffre puis on le rechiffre
+                            old_cipher = row[6]
+                            if old_cipher:
+                                try:
+                                    clear = decrypt_password(old_cipher, old_key)
+                                except:
+                                    clear = ""
+                                new_cipher = encrypt_password(clear, new_key)
+                            else:
+                                new_cipher = ""
+                            new_row = row.copy()
+                            new_row[6] = new_cipher
+                            reencrypted.append(new_row)
+                        save_connections(reencrypted)
+                        # 3) on écrit le nouveau hash maître
                         with open(PASSWORD_FILE, "w", encoding="utf-8") as f:
-                            f.write(hash_password(new_pwd.get().strip()))
+                            f.write(hash_password(new_master))
+                        MASTER_KEY = new_key
                         pwd_changed = True
                 else:
+                    # Si on vide le champ "nouveau" mais on a quand même existant : on supprime le mot de passe maître
                     if os.path.exists(PASSWORD_FILE):
+                        # L'utilisateur a voulu supprimer le mot de passe maître
                         os.remove(PASSWORD_FILE)
+                        # On vide la clé MASTER_KEY (plus d'encrypt/decrypt automatiques)
+                        MASTER_KEY = None
+
             new_lang = lang_var.get()
             new_theme = theme_var.get()
             changed = (new_lang != CURRENT_LANG) or (new_theme != CURRENT_THEME)
@@ -1442,6 +1449,7 @@ class RDPApp(tk.Tk):
                 sys.exit(0)
             else:
                 top.destroy()
+
         tk.Button(top, text=t("save"), command=save_preferences, font=self.font_main,
                   bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief="flat", width=12).pack(pady=10)
 
@@ -1604,15 +1612,13 @@ class RDPApp(tk.Tk):
         tk.Entry(search_frame, textvariable=self.search_var, font=self.font_main, bg=self.theme["entry_bg"],
                  fg=self.theme["fg"], insertbackground=self.theme["fg"], relief="flat").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
 
-        # Panneau de connexion temporaire
+        # Connexion temporaire
         temp_frame = tk.Frame(self, bg=self.theme["bg"])
         temp_frame.pack(padx=15, pady=5, anchor="center")
-
         conn_button = tk.Button(temp_frame, text="Connexion", font=self.font_main,
                                 bg=self.theme["button_bg"], fg=self.theme["button_fg"],
                                 relief="flat", command=self.connect_temporary, width=13)
         conn_button.grid(row=0, column=0, padx=5, pady=5)
-
         ip_label = tk.Label(temp_frame, text="IP :", font=self.font_main,
                             bg=self.theme["bg"], fg=self.theme["fg"])
         ip_label.grid(row=0, column=1, padx=5, pady=5, sticky="e")
@@ -1620,7 +1626,6 @@ class RDPApp(tk.Tk):
         ip_entry = tk.Entry(temp_frame, textvariable=self.temp_ip_var, font=self.font_main,
                             bg=self.theme["entry_bg"], fg=self.theme["fg"], relief="flat", width=35)
         ip_entry.grid(row=0, column=2, padx=5, pady=5, sticky="w")
-
         login_label = tk.Label(temp_frame, text="Login :", font=self.font_main,
                                bg=self.theme["bg"], fg=self.theme["fg"])
         login_label.grid(row=0, column=3, padx=5, pady=5, sticky="e")
@@ -1631,7 +1636,6 @@ class RDPApp(tk.Tk):
 
         columns = ("IP", "Login", "Dernière connexion", "Note")
         self.tree = ttk.Treeview(self, style="My.Treeview", columns=columns, show="tree headings", selectmode="browse")
-        # Bind pour afficher le tooltip sur les URLs
         self.tree.bind("<Motion>", self.on_tree_motion)
         self.tree.bind("<Leave>", lambda e: self.hide_note_tooltip())
         self.tree.heading("#0", text="Nom")
@@ -1730,15 +1734,39 @@ class RDPApp(tk.Tk):
         top.destroy()
         self.refresh_table()
 
-# Fonction de vérification du mot de passe à l'initialisation
+######################################
+# Vérification du mot de passe maître
+######################################
 def check_password(parent):
-    if os.path.exists(PASSWORD_FILE):
+    """
+    Si PASSWORD_FILE n'existe pas : on demande à l'utilisateur de créer un nouveau mot de passe maître.
+    Sinon, on vérifie le mot de passe existant.
+    """
+    global MASTER_KEY
+    if not os.path.exists(PASSWORD_FILE):
+        # Pas encore de mot de passe maître -> on en crée un
+        while True:
+            pwd1 = simpledialog.askstring("Nouveau mot de passe", "Définissez un mot de passe pour SwiftRDP :", show="*", parent=parent)
+            if pwd1 is None:
+                return False
+            pwd2 = simpledialog.askstring("Confirmation", "Confirmez le mot de passe :", show="*", parent=parent)
+            if pwd2 is None:
+                return False
+            if pwd1.strip() and pwd1 == pwd2:
+                with open(PASSWORD_FILE, "w", encoding="utf-8") as f:
+                    f.write(hash_password(pwd1))
+                MASTER_KEY = derive_key(pwd1)
+                return True
+            else:
+                messagebox.showerror("Erreur", "Les mots de passe ne correspondent pas ou sont vides. Réessayez.", parent=parent)
+    else:
         with open(PASSWORD_FILE, "r", encoding="utf-8") as f:
             stored_hash = f.read().strip()
-        pwd = simpledialog.askstring("Mot de passe", "Entrez le mot de passe pour lancer SwiftRDP:", show="*", parent=parent)
+        pwd = simpledialog.askstring("Mot de passe", "Entrez le mot de passe pour lancer SwiftRDP :", show="*", parent=parent)
         if not pwd or hash_password(pwd) != stored_hash:
             messagebox.showerror("Erreur", "Mot de passe incorrect.", parent=parent)
             return False
+        MASTER_KEY = derive_key(pwd)
     return True
 
 def read_patch_note():
@@ -1763,7 +1791,7 @@ def show_context_menu(app, event):
     return
 
 ######################################
-# Gestion d'une instance unique
+# Instance unique et envoi de lien
 ######################################
 def is_instance_running():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -1787,11 +1815,11 @@ def send_link_to_existing_instance(link):
 # Main
 ######################################
 if __name__ == "__main__":
-    # Si une instance est déjà lancée et qu'un lien RDP est fourni, on l'envoie à l'instance existante et on quitte.
+    # Si une instance est déjà lancée et qu'un lien RDP est fourni, on l'envoie à l'instance existante, puis on quitte.
     if is_instance_running() and len(sys.argv) > 1 and sys.argv[1].startswith("rdp://"):
         send_link_to_existing_instance(sys.argv[1])
         sys.exit(0)
-    # Sinon, lancer l'application normalement.
+
     app = RDPApp()
     threading.Thread(target=socket_listener, args=(app,), daemon=True).start()
     app.withdraw()
@@ -1800,8 +1828,6 @@ if __name__ == "__main__":
     app.deiconify()
     if len(sys.argv) > 1 and sys.argv[1].startswith("rdp://"):
         ip = sys.argv[1][len("rdp://"):]
-        # Utiliser handle_rdp_link pour traiter le lien dès le lancement
         app.after(100, lambda: app.handle_rdp_link(ip))
-    # Lancer le check for update après authentification
     app.after(2000, lambda: check_for_update(app))
     app.mainloop()
