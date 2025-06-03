@@ -1,7 +1,4 @@
-- Added a field to connect without necessarily adding the connection
-- Prompt to add the connection after closing RDP
-- Added the ability to register multiple users for a connection
-- Prompt to choose which user to connect with (if multiple users)
-- fix prompt in center of screen "select user"
-- Fix multiple connection (tempory and not temporary)
-- Added check if this IP exist after a connection temporary (no prompt for adding if existing)
+- Added the ability to save encrypted and secure passwords (never in the clear)
+- Added clickable link possible in the note field
+- Add a pop-up when you pass the mouse on a clickable link
+- Possibility of being redirected to the browser after clicking on a link
